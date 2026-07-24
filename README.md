@@ -4,9 +4,54 @@ Plataforma comercial integrada ao **Omie ERP** — camada de OMS comercial para
 vendedores internos e externos: catálogo, consulta de estoque, clientes,
 orçamentos e pedidos, com sincronização confiável, auditoria e idempotência.
 
-> **Estado atual: Fases 1 e 2 concluídas (descoberta + arquitetura).**
-> Ainda não há código de aplicação neste repositório. Ver
-> [`docs/development-roadmap.md`](docs/development-roadmap.md) para o que vem a seguir.
+> **Estado atual: Fases 1 a 3 concluídas** (descoberta, arquitetura e fundação).
+> A fundação é funcional: autenticação, RBAC no servidor, multiempresa, auditoria
+> e painel administrativo. **Nenhuma chamada à API da Omie existe ainda** — isso é
+> a Fase 4. Os módulos comerciais (produtos, estoque, clientes, orçamentos,
+> pedidos) são telas de placeholder que declaram a própria ausência — Fase 5.
+> Ver [`docs/development-roadmap.md`](docs/development-roadmap.md) e
+> [`docs/known-limitations.md`](docs/known-limitations.md).
+
+## Stack
+
+Next.js 16 (App Router) · TypeScript estrito · Tailwind 4 · PostgreSQL 17 ·
+Prisma 7 · Redis 7 · Better Auth · Zod · Vitest
+
+## Rodando localmente
+
+```bash
+cp .env.example .env      # gere AUTH_SECRET e ENCRYPTION_KEY próprios
+docker compose up -d      # Postgres + Redis + app
+npm run db:migrate        # aplica a migration inicial
+npm run db:seed           # organização, perfis e usuários de demonstração
+```
+
+A aplicação sobe em `http://localhost:3000`. Sem Docker, basta ter Postgres e
+Redis acessíveis nas URLs do `.env` e rodar `npm run dev`.
+
+Usuários criados pelo seed (senha `senha-de-desenvolvimento`, apenas
+desenvolvimento — o seed se recusa a rodar com `NODE_ENV=production`):
+
+| E-mail | Perfil |
+|---|---|
+| `admin@demo.local` | ADMIN |
+| `gerente@demo.local` | GERENTE_COMERCIAL |
+| `vendedor1@demo.local` | VENDEDOR (vinculado ao vendedor Omie 1001) |
+| `vendedor2@demo.local` | VENDEDOR (vinculado ao vendedor Omie 1002) |
+
+## Comandos
+
+```bash
+npm run check       # typecheck + lint + testes
+npm run typecheck
+npm run lint
+npm run test
+npm run build
+npm run db:studio   # inspeção do banco
+```
+
+`OMIE_MOCK_MODE=true` (padrão) permite desenvolver e demonstrar sem credenciais
+reais da Omie.
 
 ## Documentação
 

@@ -52,9 +52,28 @@ apenas visibilidade de estoque. A arquitetura deixa espaço (entidades
 `Warehouse`, `InventoryMovement` já existem), mas nenhum desses módulos foi
 projetado em detalhe e não devem ser prometidos como "quase prontos".
 
-## 4. Estado atual do repositório
+## 4. Estado atual do repositório (Fase 3 concluída)
 
-Nesta entrega existe **apenas documentação de arquitetura** (Fases 1 e 2). Não
-há código de aplicação, schema Prisma, Docker Compose ou testes ainda — esses
-são o conteúdo da Fase 3 em diante (`docs/development-roadmap.md`). Qualquer
-afirmação de que a plataforma "funciona" neste momento seria falsa.
+Existe fundação funcional: projeto Next.js 16 com TypeScript estrito, Postgres +
+Prisma 7 com migration inicial, Redis, autenticação, RBAC aplicado no servidor,
+layout mobile-first, painel administrativo básico, Docker Compose, logs
+estruturados com mascaramento, health/ready e 64 testes automatizados.
+
+**Verificado de ponta a ponta** contra Postgres 16 e Redis 7 reais: migration,
+seed, login com senha correta e recusa com senha errada, CSRF por `Origin`,
+auditoria de login/logout com IP e user-agent, permissões por página devolvendo
+403, e isolamento multiempresa (duas organizações, incluindo o mesmo código de
+vendedor Omie em ambas, sem vazamento em nenhuma direção).
+
+**Ainda NÃO existe** (não confundir com pronto):
+- Nenhuma chamada real à API da Omie — o client de integração é a Fase 4.
+- Nenhum módulo comercial: produtos, estoque, clientes, orçamentos e pedidos são
+  telas de placeholder que declaram a própria ausência. Fase 5.
+- Nenhuma fila, worker, webhook ou reconciliação. Fase 6.
+- Incremento automático de tentativas falhas de login, recuperação de senha, MFA
+  e tela de revogação de sessões (campos existem no schema e o bloqueio é
+  respeitado na autorização, mas nada incrementa o contador ainda).
+- Criação/edição de usuários e vínculos de vendedor pela interface — hoje via
+  seed ou banco.
+- Testes E2E de navegador e testes de integração com banco (os 64 testes atuais
+  cobrem o núcleo puro: permissões, escopo multiempresa, mascaramento, erros).

@@ -1,0 +1,318 @@
+// Schema inicial — Fase 3 (fundação).
+// Cobre organização, identidade, permissões e vínculo de vendedor.
+// Catálogo, estoque, clientes, orçamentos e pedidos entram na Fase 5,
+// conforme docs/database-model.md e docs/development-roadmap.md.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/client"
+}
+
+// A URL de conexão fica em prisma.config.ts (Prisma 7) e, em runtime, no
+// driver adapter configurado em src/server/db.ts.
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// Organização e configuração
+// ---------------------------------------------------------------------------
+
+model Organization {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  document  String?  @db.VarChar(14)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime?
+
+  settings    OrganizationSettings?
+  credential  OmieCredential?
+  users       User[]
+  roles       Role[]
+  sellerLinks SellerLink[]
+  auditLogs   AuditLog[]
+
+  @@index([active])
+  @@map("organizations")
+}
+
+/// Regra de estoque disponível exibido ao vendedor.
+/// OMIE_CALCULATED usa o campo `nDisponivel` que a própria Omie já retorna em
+/// estoque/resumo/ (ver docs/omie-api-mapping.md §4) — as demais são fórmulas
+/// calculadas localmente a partir dos campos brutos.
+enum AvailableStockRule {
+  OMIE_CALCULATED
+  PHYSICAL
+  BALANCE
+  PHYSICAL_MINUS_RESERVED
+  BALANCE_MINUS_PENDING
+  CUSTOM
+}
+
+model OrganizationSettings {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @unique @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  availableStockRule AvailableStockRule @default(OMIE_CALCULATED)
+  /// Margem de segurança subtraída do estoque exibido (nunca abaixo de zero).
+  stockSafetyMargin  Decimal            @default(0) @db.Decimal(18, 4)
+
+  /// Ordem de precedência das tabelas de preço, ex.: ["customer","seller","organization","product"].
+  priceTablePrecedence Json @default("[\"customer\",\"seller\",\"organization\",\"product\"]")
+
+  /// Etapa Omie que representa orçamento. "00" é o padrão documentado, mas as
+  /// etapas de Kanban são customizáveis por conta — por isso fica configurável.
+  defaultQuoteStage     String @default("00") @db.VarChar(2)
+  /// Etapa Omie para a qual um orçamento é movido ao ser convertido em pedido.
+  defaultConfirmedStage String @default("10") @db.VarChar(2)
+
+  /// Intervalos de reconciliação em segundos, por domínio.
+  reconciliationIntervals Json @default("{\"inventory\":60,\"products\":900,\"customers\":900,\"priceTables\":900,\"auxiliary\":86400,\"orders\":300}")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("organization_settings")
+}
+
+model OmieCredential {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @unique @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  /// Criptografados em repouso com AES-256-GCM (ENCRYPTION_KEY).
+  /// Nunca são lidos fora do servidor nem escritos em log.
+  appKeyEncrypted    String
+  appSecretEncrypted String
+  /// Últimos 4 dígitos da app_key, apenas para exibição no painel admin.
+  appKeyHint         String  @db.VarChar(8)
+
+  /// Token não-adivinhável que compõe a URL do webhook desta organização.
+  /// Compensa a ausência de assinatura HMAC documentada pela Omie
+  /// (docs/known-limitations.md item 2).
+  webhookSecretToken String @unique
+
+  active         Boolean   @default(true)
+  lastTestedAt   DateTime?
+  lastTestResult String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("omie_credentials")
+}
+
+// ---------------------------------------------------------------------------
+// Identidade (compatível com Better Auth) e permissões
+// ---------------------------------------------------------------------------
+
+model User {
+  id            String  @id @default(uuid()) @db.Uuid
+  name          String
+  email         String
+  emailVerified Boolean @default(false)
+  image         String?
+
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+
+  active           Boolean   @default(true)
+  failedLoginCount Int       @default(0)
+  lockedUntil      DateTime?
+  mfaEnabled       Boolean   @default(false)
+  lastLoginAt      DateTime?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  sessions   Session[]
+  accounts   Account[]
+  userRoles  UserRole[]
+  sellerLink SellerLink?
+  auditLogs  AuditLog[]
+
+  @@unique([email])
+  @@index([organizationId, active])
+  @@map("users")
+}
+
+model Session {
+  id        String   @id @default(uuid()) @db.Uuid
+  token     String   @unique
+  expiresAt DateTime
+  ipAddress String?
+  userAgent String?
+
+  userId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model Account {
+  id         String @id @default(uuid()) @db.Uuid
+  accountId  String
+  providerId String
+
+  userId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  /// Hash Argon2id — nunca a senha em texto puro.
+  password              String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([providerId, accountId])
+  @@index([userId])
+  @@map("accounts")
+}
+
+model Verification {
+  id         String   @id @default(uuid()) @db.Uuid
+  identifier String
+  value      String
+  expiresAt  DateTime
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([identifier])
+  @@map("verifications")
+}
+
+model Role {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  name        String
+  description String?
+  /// Perfis padrão do seed não podem ser excluídos pela UI.
+  isSystem    Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  userRoles       UserRole[]
+  rolePermissions RolePermission[]
+
+  @@unique([organizationId, name])
+  @@map("roles")
+}
+
+/// Catálogo global de permissões — populado pelo seed a partir de
+/// src/domain/permissions/catalog.ts. Não tem organizationId de propósito:
+/// o conjunto de permissões possíveis é o mesmo para toda a plataforma.
+model Permission {
+  id          String  @id @default(uuid()) @db.Uuid
+  key         String  @unique
+  description String?
+
+  rolePermissions RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       String     @db.Uuid
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permissionId String     @db.Uuid
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@index([permissionId])
+  @@map("role_permissions")
+}
+
+model UserRole {
+  userId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  roleId String @db.Uuid
+  role   Role   @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  assignedAt DateTime @default(now())
+
+  @@id([userId, roleId])
+  @@index([roleId])
+  @@map("user_roles")
+}
+
+// ---------------------------------------------------------------------------
+// Vínculo com o vendedor do Omie
+// ---------------------------------------------------------------------------
+
+/// defaultPriceTableId e maxDiscountPercent NÃO existem na API de vendedores da
+/// Omie (confirmado em docs/omie-api-mapping.md §6) — são exclusivamente locais.
+model SellerLink {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  userId String @unique @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// `codigo` do cadastro de vendedores da Omie.
+  omieSellerId   Int
+  /// `codInt` (código de integração) do vendedor, quando existir.
+  omieSellerCode String?
+  displayName    String
+  active         Boolean @default(true)
+
+  defaultPriceTableId Int?
+  maxDiscountPercent  Decimal @default(0) @db.Decimal(5, 2)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, omieSellerId])
+  @@index([organizationId, active])
+  @@map("seller_links")
+}
+
+// ---------------------------------------------------------------------------
+// Auditoria
+// ---------------------------------------------------------------------------
+
+model AuditLog {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  /// Nulo para eventos sem ator identificado (ex.: falha de login com e-mail inexistente).
+  actorUserId String? @db.Uuid
+  actor       User?   @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  action     String
+  entityType String
+  entityId   String?
+
+  /// Dados sensíveis já mascarados antes da gravação (src/lib/masking.ts).
+  beforeData Json?
+  afterData  Json?
+
+  ipAddress     String?
+  userAgent     String?
+  correlationId String?
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId, createdAt])
+  @@index([organizationId, entityType, entityId])
+  @@index([organizationId, actorUserId])
+  @@map("audit_logs")
+}

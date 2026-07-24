@@ -149,7 +149,22 @@ Em desenvolvimento (Docker Compose), o worker roda como **serviço separado** do
 | Falta de garantia de reserva de estoque no Omie para pedidos pendentes | Nunca prometer "sem overselling" na UI; sempre revalidar estoque no backend imediatamente antes de `IncluirPedido`, e aceitar que pode haver conflito pós-fato, tratado como `CONFLICT` sync status |
 | Escalonamento de custo de chamadas (catálogo grande) | Cache Redis + paginação obrigatória + sync incremental por data de alteração, nunca full-scan no caminho de leitura do vendedor |
 
-## 9. Alternativas descartadas
+## 9. Decisões de versão tomadas na implementação (Fase 3)
+
+Detalhes que só apareceram ao escrever o código e que valem registro porque
+mudam onde as coisas ficam:
+
+| Item | Decisão | Motivo |
+|---|---|---|
+| Prisma 7 | URL do banco em `prisma.config.ts` + driver adapter (`@prisma/adapter-pg`) no `PrismaClient` | O Prisma 7 removeu `url = env(...)` do `schema.prisma`; a conexão em runtime passa pelo adapter |
+| IDs do Better Auth | `advanced.database.generateId: "uuid"` | Sem isso o Better Auth gera IDs alfanuméricos próprios, incompatíveis com as colunas `@db.Uuid` do schema |
+| Middleware | Arquivo `src/proxy.ts` (convenção `proxy` do Next 16) | `middleware.ts` está deprecado no Next 16 |
+| Negação de acesso | `experimental.authInterrupts` + `forbidden()`/`unauthorized()` com `app/forbidden.tsx` e `app/unauthorized.tsx` | Sem isso, falta de permissão lançada numa página virava **HTTP 500**; agora devolve 403/401 reais |
+| Duas famílias de guarda | `requirePermission`/`requireAnyPermission` (páginas, interrompem com 403/401) vs. `assertPermission`/`assertReadScope` (domínio, lançam `AppError`) | Páginas precisam de status HTTP; Server Actions precisam de erro convertível em `ActionResult` |
+| Rotas tipadas | `typedRoutes: true` | Um `href` para rota inexistente vira erro de compilação |
+| Lint | `eslint .` direto, flat config | `next lint` foi removido no Next 16 |
+
+## 10. Alternativas descartadas
 
 - **tRPC no lugar de Server Actions/Route Handlers**: descartado para reduzir dependências na v1; Server Actions do Next.js já cobrem a necessidade de RPC tipado ponta a ponta.
 - **Prisma substituído por Drizzle**: Prisma escolhido por maturidade de migrations, ecossistema e familiaridade — decisão reversível se performance de queries N+1 se tornar problema.

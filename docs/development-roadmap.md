@@ -13,22 +13,26 @@ aceite cumprido.
   `docs/synchronization-strategy.md`, `docs/security.md`, `docs/permissions.md`,
   `docs/api-contracts.md`, `docs/development-roadmap.md` (este arquivo).
 
-## Fase 3 — Fundação
-1. Estrutura do projeto Next.js (TypeScript estrito), Tailwind, shadcn/ui.
-2. `docker-compose.yml` (Postgres, Redis, app, worker), `.env.example`.
-3. Prisma schema inicial (entidades de identidade/permissão/organização —
-   ainda sem catálogo/vendas) + migration inicial.
-4. Autenticação (Better Auth) com sessão, bloqueio de conta, recuperação de
-   senha; RBAC básico (`Role`/`Permission`/`UserRole`) e middleware
-   `requirePermission`.
-5. Layout principal (mobile-first) + painel administrativo básico (só shell,
-   sem dados reais ainda).
-6. Logs estruturados, tratamento global de erro, `/api/health`, `/api/ready`.
-7. Seed mínimo (uma organização, um `SUPER_ADMIN`, um `ADMIN`).
-8. Testes iniciais: auth, RBAC, isolamento multiempresa.
+## Fase 3 — Fundação ✅
+1. ✅ Estrutura do projeto Next.js 16 (TypeScript estrito, `noUncheckedIndexedAccess`), Tailwind 4, primitivas no padrão shadcn/ui.
+2. ✅ `docker-compose.yml` (Postgres 17, Redis 7, app), `Dockerfile.dev`, `.env.example`. O serviço de worker fica para a Fase 6, quando existirem filas.
+3. ✅ Prisma 7: schema de organização/identidade/permissões/vínculo de vendedor/auditoria + migration inicial aplicada.
+4. ✅ Autenticação Better Auth (sessão em banco, cadastro público desabilitado, CSRF por `Origin`) e RBAC com `requirePermission`/`requireAnyPermission` no servidor.
+5. ✅ Layout mobile-first com barra inferior + painel administrativo com dados reais (usuários, vendedores, auditoria, estado da integração).
+6. ✅ Logs estruturados com mascaramento, `error.tsx`/`not-found.tsx`/`forbidden.tsx`/`unauthorized.tsx`, `/api/health`, `/api/ready`.
+7. ✅ Seed: organização, 5 perfis, 33 permissões, 4 usuários, 2 vínculos de vendedor.
+8. ✅ 64 testes (permissões, escopo multiempresa, mascaramento, erros).
 
-**Critério de aceite:** administrador consegue logar, ver o shell do painel,
-health/ready respondem, testes de auth/RBAC/isolamento passam.
+**Critério de aceite — cumprido e verificado** contra Postgres 16 e Redis 7
+reais: migration e seed executam; login aceita a senha correta e recusa a
+errada; permissões negadas devolvem **403** (não 500); auditoria de login e
+logout grava IP e user-agent; duas organizações distintas não vazam dados uma
+para a outra, nem quando compartilham o mesmo código de vendedor Omie;
+`/api/health` e `/api/ready` respondem 200 com Postgres e Redis de pé.
+
+**Dívidas registradas** em `docs/known-limitations.md` §4: incremento de
+tentativas falhas de login, recuperação de senha, MFA, revogação de sessões pela
+UI e CRUD de usuários/vendedores pela interface.
 
 ## Fase 4 — Integração Omie (client isolado)
 1. `src/integrations/omie/client` — request builder (`call/app_key/app_secret/param`),

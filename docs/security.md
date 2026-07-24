@@ -2,29 +2,39 @@
 
 ## 1. Autenticação
 
-Solução escolhida: **Better Auth** (self-hosted, sem dependência de serviço
-terceiro pago, suporta sessão segura, MFA, e é compatível com Next.js App Router
-via handler nativo). Alternativa avaliada: Auth.js (mais simples para OAuth
-social, mas gestão de sessão/senha própria menos madura para o fluxo de
-bloqueio de conta e MFA exigidos aqui); Clerk (excelente DX, mas dependência de
-serviço externo pago e dado de usuário fora do nosso banco, o que complica
-auditoria/LGPD end-to-end e o isolamento multiempresa que já mantemos no
-Postgres). Decisão pode ser revisitada na Fase 3 com uma prova de conceito de
-ambos antes do primeiro commit de auth.
+Solução escolhida e **implementada na Fase 3**: **Better Auth** (self-hosted, sem
+dependência de serviço terceiro pago, suporta sessão segura, MFA, e é compatível
+com Next.js App Router via handler nativo). Alternativa avaliada: Auth.js (mais
+simples para OAuth social, mas gestão de sessão/senha própria menos madura para o
+fluxo de bloqueio de conta e MFA exigidos aqui); Clerk (excelente DX, mas
+dependência de serviço externo pago e dado de usuário fora do nosso banco, o que
+complica auditoria/LGPD end-to-end e o isolamento multiempresa que já mantemos no
+Postgres).
 
-Requisitos cobertos:
-- Sessões seguras (cookie `httpOnly`, `secure`, `sameSite=lax`, rotação de token).
-- Política de senha mínima (comprimento, não reutilização de senha vazada via
-  checagem opcional) + hashing com Argon2id.
-- Bloqueio de conta após N tentativas falhas (`User.failedLoginCount`,
-  `lockedUntil`), com auditoria de cada falha.
-- Recuperação de senha via link de expiração curta, token de uso único.
-- MFA (TOTP) disponível, obrigatório configurável por organização para perfis
-  `ADMIN`/`SUPER_ADMIN`.
-- Sessões revogáveis (lista de sessões ativas por usuário, admin pode revogar).
-- Multiempresa: sessão carrega `organizationId` resolvido no login; usuário
-  pertence a exatamente uma organização na v1 (multi-org por usuário fica para
-  expansão futura, schema já suporta via tabela de vínculo se necessário).
+Estado atual (implementado e verificado):
+- Sessões em banco (tabela `sessions`), cookie `httpOnly`, `sameSite=lax`,
+  `secure` em produção. Sessão conferida no banco a cada requisição
+  (`cookieCache` desabilitado), o que torna a revogação imediata.
+- **Cadastro público desabilitado** (`disableSignUp`): usuários são criados por
+  administrador, nunca por auto-registro.
+- Senha mínima de 12 caracteres.
+- **Hash de senha: scrypt** (padrão do Better Auth) — não Argon2id. scrypt é um
+  KDF com custo de memória adequado; migrar para Argon2id é possível via hash
+  customizado do Better Auth, e fica registrado como melhoria futura em vez de
+  ser descrito como já feito.
+- Proteção CSRF por validação de `Origin` no endpoint de autenticação
+  (verificada: requisição sem `Origin` ou com origem estrangeira recebe 403).
+- Auditoria de login e logout via hooks de banco de sessão, com IP e user-agent.
+- Login bem-sucedido zera `failedLoginCount` e grava `lastLoginAt`.
+- Campos de bloqueio de conta (`failedLoginCount`, `lockedUntil`) existem no
+  schema e são **respeitados na autorização** (usuário bloqueado é tratado como
+  inativo). O *incremento* automático a cada falha e a política de recuperação
+  de senha ainda não estão implementados — ver `docs/known-limitations.md` §4.
+- Multiempresa: sessão resolve `organizationId` a partir do usuário no banco;
+  usuário pertence a exatamente uma organização na v1.
+
+Pendente de fases seguintes: MFA (TOTP), recuperação de senha, tela de sessões
+ativas com revogação, incremento de tentativas falhas.
 
 ## 2. Autorização
 
@@ -101,9 +111,9 @@ escrita:
 
 - HTTPS obrigatório em produção (HSTS).
 - Cookies `Secure`, `httpOnly`, `SameSite`.
-- CSRF: Server Actions do Next.js já mitigam via origem verificada; Route
-  Handlers de mutação usam verificação de origem/CSRF token quando expostos a
-  formulários tradicionais.
+- CSRF: Server Actions do Next.js já mitigam via origem verificada; o endpoint
+  de autenticação valida `Origin` (verificado: 403 sem `Origin` e 403 com origem
+  estrangeira). Route Handlers de mutação futuros seguem o mesmo padrão.
 - Cabeçalhos: `Content-Security-Policy`, `X-Content-Type-Options: nosniff`,
   `Referrer-Policy: strict-origin-when-cross-origin`, `X-Frame-Options: DENY`.
 - Rate limiting por IP/usuário nas rotas de autenticação e no endpoint de
