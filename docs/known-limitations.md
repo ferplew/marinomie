@@ -65,8 +65,29 @@ auditoria de login/logout com IP e user-agent, permissões por página devolvend
 403, e isolamento multiempresa (duas organizações, incluindo o mesmo código de
 vendedor Omie em ambas, sem vazamento em nenhuma direção).
 
+**Fase 4 concluída**: existe o client de integração completo — rate limiter de
+240 req/min por organização, retry com backoff exponencial e jitter, timeout,
+circuit breaker por organização, classificação de erro, validação Zod de toda
+resposta, mappers Omie→DTO, paginação retomável, modo mock com fixtures e
+credenciais cifradas em repouso (AES-256-GCM) com painel de configuração e teste
+de conexão.
+
+**Limitações específicas da Fase 4:**
+- `ListarTabelasPreco` **não é exposto**: o nome do array na resposta não pôde
+  ser confirmado na documentação consultada. Só `ListarTabelaItens` está
+  disponível. Confirmar antes de implementar a listagem de tabelas.
+- O modo mock não simula latência da Omie, ordenação real nem todos os filtros —
+  serve para desenvolver e demonstrar, não para medir desempenho.
+- O circuit breaker é **por processo** (in-memory), não compartilhado entre
+  réplicas. Cada réplica descobre a indisponibilidade por conta própria em
+  poucas requisições. Decisão registrada em `circuit-breaker.ts`.
+- Nenhuma chamada real à API da Omie foi executada ainda: toda a verificação
+  desta fase usou o transporte mock. O caminho HTTP real só será exercitado
+  quando uma credencial válida for configurada.
+- Os serviços de pedido/orçamento (`produtos/pedido`) ainda não têm service —
+  entram na Fase 5, junto com a idempotência de escrita.
+
 **Ainda NÃO existe** (não confundir com pronto):
-- Nenhuma chamada real à API da Omie — o client de integração é a Fase 4.
 - Nenhum módulo comercial: produtos, estoque, clientes, orçamentos e pedidos são
   telas de placeholder que declaram a própria ausência. Fase 5.
 - Nenhuma fila, worker, webhook ou reconciliação. Fase 6.

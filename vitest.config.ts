@@ -14,6 +14,12 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),
+      // `server-only` lança ao ser importado fora do runtime do Next; o stub
+      // permite testar os módulos de servidor em Node puro. A proteção real
+      // continua ativa no build.
+      "server-only": fileURLToPath(
+        new URL("./tests/stubs/server-only.ts", import.meta.url),
+      ),
     },
   },
 });

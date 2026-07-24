@@ -25,8 +25,8 @@ describe("maskSensitive", () => {
   it("redige integralmente credenciais da Omie", () => {
     const masked = maskSensitive({
       call: "ListarProdutos",
-      app_key: "7916998416327",
-      app_secret: "6382ea57efde0f4431fd89e65525c260",
+      app_key: "0000000000000",
+      app_secret: "ffffffffffffffffffffffffffffffff",
     }) as Record<string, unknown>;
 
     expect(masked["call"]).toBe("ListarProdutos");
@@ -35,7 +35,7 @@ describe("maskSensitive", () => {
   });
 
   it("não deixa o segredo aparecer em lugar nenhum do resultado serializado", () => {
-    const secret = "6382ea57efde0f4431fd89e65525c260";
+    const secret = "ffffffffffffffffffffffffffffffff";
     const serialized = JSON.stringify(
       maskSensitive({ nivel1: { nivel2: [{ appSecret: secret }] } }),
     );

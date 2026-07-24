@@ -34,19 +34,38 @@ para a outra, nem quando compartilham o mesmo código de vendedor Omie;
 tentativas falhas de login, recuperação de senha, MFA, revogação de sessões pela
 UI e CRUD de usuários/vendedores pela interface.
 
-## Fase 4 — Integração Omie (client isolado)
-1. `src/integrations/omie/client` — request builder (`call/app_key/app_secret/param`),
-   rate limiter (240 req/min), retry+backoff+jitter, normalização de erro
-   (`OmieIntegrationError`), mascaramento de log, `OMIE_MOCK_MODE`.
-2. `OmieCredential` (CRUD + criptografia) e tela admin de "testar conexão".
-3. Serviços isolados por domínio (`products`, `inventory`, `customers`,
-   `sellers`, `price-tables`) — cada um implementado **só depois** de
-   confirmar o item correspondente do mapping que ainda estiver em aberto.
-4. Mock da Omie (fixtures baseadas nos payloads documentados) usado nos testes
-   e em `OMIE_MOCK_MODE=true` para demo sem API real.
+## Fase 4 — Integração Omie (client isolado) ✅
+1. ✅ `src/integrations/omie/client` — request builder (`call/app_key/app_secret/param`),
+   rate limiter (240 req/min, limite efetivo conservador por organização),
+   retry + backoff exponencial + full jitter, timeout, circuit breaker por
+   organização, normalização de erro (`OmieIntegrationError`), mascaramento de
+   log, correlation ID, `OMIE_MOCK_MODE`.
+2. ✅ `OmieCredential` cifrada em repouso (AES-256-GCM) com painel de
+   configuração e ação de "testar conexão".
+3. ✅ Serviços isolados: `products`, `inventory`, `customers`, `sellers`,
+   `price-tables`, `connection`. `ListarTabelasPreco` foi deliberadamente
+   **não implementado** porque o nome do array na resposta não pôde ser
+   confirmado (docs/known-limitations.md).
+4. ✅ Mock da Omie com fixtures que reproduzem a estrutura documentada de cada
+   resposta, atrás da mesma interface de transporte do HTTP real.
 
-**Critério de aceite:** client isolado testado (unit + integração com mock),
-nenhuma credencial exposta em log, "testar conexão" funcional no admin.
+**Critério de aceite — cumprido.** 124 testes novos (188 no total). Verificado
+contra Postgres e Redis reais: credencial gravada cifrada (`v1:` + AES-256-GCM,
+segredo ausente do banco em texto puro), decifrada corretamente, nenhum segredo
+presente no HTML da página administrativa (só a dica dos 4 últimos dígitos),
+teste de conexão executado ponta a ponta e persistido, limitador de taxa
+bloqueando na janela real do Redis, e listagem de produtos com paginação.
+
+Decisões de projeto verificadas por teste:
+- **Escrita nunca é repetida automaticamente** (uma única tentativa); timeout ou
+  HTTP 500 sem mensagem conhecida em escrita produz `UNCERTAIN_RESULT`, que
+  obriga consulta pelo código de integração antes de qualquer reenvio.
+- **Erro de validação não abre o circuito**: ele prova que a Omie está saudável.
+- **O mapper não calcula estoque disponível**: repassa `nDisponivel` da Omie e os
+  componentes brutos separadamente, deixando a fórmula para a regra configurável
+  da organização.
+- **Teto de desconto** é o menor entre o `nDescMaximo` da tabela Omie e o limite
+  do vendedor.
 
 ## Fase 5 — Módulos comerciais
 1. Produtos: listagem paginada, busca, detalhe, favoritos/recentes.
