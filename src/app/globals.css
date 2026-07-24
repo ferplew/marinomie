@@ -1,0 +1,50 @@
+@import "tailwindcss";
+
+/*
+ * Tokens de tema no formato usado pelo shadcn/ui, para que os componentes
+ * possam ser adicionados incrementalmente sem retrabalho de estilo.
+ */
+@theme {
+  --color-background: oklch(1 0 0);
+  --color-foreground: oklch(0.16 0.02 250);
+  --color-card: oklch(1 0 0);
+  --color-card-foreground: oklch(0.16 0.02 250);
+  --color-primary: oklch(0.52 0.17 255);
+  --color-primary-foreground: oklch(0.99 0 0);
+  --color-secondary: oklch(0.96 0.01 250);
+  --color-secondary-foreground: oklch(0.24 0.02 250);
+  --color-muted: oklch(0.96 0.01 250);
+  --color-muted-foreground: oklch(0.52 0.02 250);
+  --color-destructive: oklch(0.58 0.22 27);
+  --color-destructive-foreground: oklch(0.99 0 0);
+  --color-success: oklch(0.6 0.15 150);
+  --color-warning: oklch(0.75 0.15 75);
+  --color-border: oklch(0.92 0.01 250);
+  --color-input: oklch(0.92 0.01 250);
+  --color-ring: oklch(0.52 0.17 255);
+  --radius: 0.625rem;
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  html {
+    /* Evita zoom automático no iOS ao focar inputs. */
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans, ui-sans-serif, system-ui, sans-serif);
+    /* Respeita a safe area de aparelhos com notch — a app é mobile-first. */
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-ring);
+    outline-offset: 2px;
+  }
+}

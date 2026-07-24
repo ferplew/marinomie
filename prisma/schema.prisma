@@ -1,0 +1,830 @@
+// Schema — Fases 3 e 5.
+// Fase 3: organização, identidade, permissões e vínculo de vendedor.
+// Fase 5: catálogo, estoque, clientes, tabelas de preço e idempotência.
+// Orçamentos e pedidos fecham a Fase 5; filas e webhooks são a Fase 6.
+// Ver docs/database-model.md e docs/development-roadmap.md.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/client"
+}
+
+// A URL de conexão fica em prisma.config.ts (Prisma 7) e, em runtime, no
+// driver adapter configurado em src/server/db.ts.
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// Organização e configuração
+// ---------------------------------------------------------------------------
+
+model Organization {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  document  String?  @db.VarChar(14)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime?
+
+  settings    OrganizationSettings?
+  credential  OmieCredential?
+  users       User[]
+  roles       Role[]
+  sellerLinks SellerLink[]
+  auditLogs   AuditLog[]
+
+  products        Product[]
+  productFamilies ProductFamily[]
+  customers       Customer[]
+  warehouses      Warehouse[]
+  inventory       InventoryPosition[]
+  priceTables     PriceTable[]
+  idempotencyKeys IdempotencyKey[]
+  salesDocuments  SalesDocument[]
+
+  @@index([active])
+  @@map("organizations")
+}
+
+/// Regra de estoque disponível exibido ao vendedor.
+/// OMIE_CALCULATED usa o campo `nDisponivel` que a própria Omie já retorna em
+/// estoque/resumo/ (ver docs/omie-api-mapping.md §4) — as demais são fórmulas
+/// calculadas localmente a partir dos campos brutos.
+enum AvailableStockRule {
+  OMIE_CALCULATED
+  PHYSICAL
+  BALANCE
+  PHYSICAL_MINUS_RESERVED
+  BALANCE_MINUS_PENDING
+  CUSTOM
+}
+
+model OrganizationSettings {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @unique @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  availableStockRule AvailableStockRule @default(OMIE_CALCULATED)
+  /// Margem de segurança subtraída do estoque exibido (nunca abaixo de zero).
+  stockSafetyMargin  Decimal            @default(0) @db.Decimal(18, 4)
+
+  /// Ordem de precedência das tabelas de preço, ex.: ["customer","seller","organization","product"].
+  priceTablePrecedence Json @default("[\"customer\",\"seller\",\"organization\",\"product\"]")
+
+  /// Etapa Omie que representa orçamento. "00" é o padrão documentado, mas as
+  /// etapas de Kanban são customizáveis por conta — por isso fica configurável.
+  defaultQuoteStage     String @default("00") @db.VarChar(2)
+  /// Etapa Omie para a qual um orçamento é movido ao ser convertido em pedido.
+  defaultConfirmedStage String @default("10") @db.VarChar(2)
+
+  /// Intervalos de reconciliação em segundos, por domínio.
+  reconciliationIntervals Json @default("{\"inventory\":60,\"products\":900,\"customers\":900,\"priceTables\":900,\"auxiliary\":86400,\"orders\":300}")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("organization_settings")
+}
+
+model OmieCredential {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @unique @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  /// Criptografados em repouso com AES-256-GCM (ENCRYPTION_KEY).
+  /// Nunca são lidos fora do servidor nem escritos em log.
+  appKeyEncrypted    String
+  appSecretEncrypted String
+  /// Últimos 4 dígitos da app_key, apenas para exibição no painel admin.
+  appKeyHint         String  @db.VarChar(8)
+
+  /// Token não-adivinhável que compõe a URL do webhook desta organização.
+  /// Compensa a ausência de assinatura HMAC documentada pela Omie
+  /// (docs/known-limitations.md item 2).
+  webhookSecretToken String @unique
+
+  active         Boolean   @default(true)
+  lastTestedAt   DateTime?
+  lastTestResult String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("omie_credentials")
+}
+
+// ---------------------------------------------------------------------------
+// Identidade (compatível com Better Auth) e permissões
+// ---------------------------------------------------------------------------
+
+model User {
+  id            String  @id @default(uuid()) @db.Uuid
+  name          String
+  email         String
+  emailVerified Boolean @default(false)
+  image         String?
+
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+
+  active           Boolean   @default(true)
+  failedLoginCount Int       @default(0)
+  lockedUntil      DateTime?
+  mfaEnabled       Boolean   @default(false)
+  lastLoginAt      DateTime?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  sessions   Session[]
+  accounts   Account[]
+  userRoles  UserRole[]
+  sellerLink SellerLink?
+  auditLogs  AuditLog[]
+
+  @@unique([email])
+  @@index([organizationId, active])
+  @@map("users")
+}
+
+model Session {
+  id        String   @id @default(uuid()) @db.Uuid
+  token     String   @unique
+  expiresAt DateTime
+  ipAddress String?
+  userAgent String?
+
+  userId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model Account {
+  id         String @id @default(uuid()) @db.Uuid
+  accountId  String
+  providerId String
+
+  userId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  /// Hash Argon2id — nunca a senha em texto puro.
+  password              String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([providerId, accountId])
+  @@index([userId])
+  @@map("accounts")
+}
+
+model Verification {
+  id         String   @id @default(uuid()) @db.Uuid
+  identifier String
+  value      String
+  expiresAt  DateTime
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([identifier])
+  @@map("verifications")
+}
+
+model Role {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  name        String
+  description String?
+  /// Perfis padrão do seed não podem ser excluídos pela UI.
+  isSystem    Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  userRoles       UserRole[]
+  rolePermissions RolePermission[]
+
+  @@unique([organizationId, name])
+  @@map("roles")
+}
+
+/// Catálogo global de permissões — populado pelo seed a partir de
+/// src/domain/permissions/catalog.ts. Não tem organizationId de propósito:
+/// o conjunto de permissões possíveis é o mesmo para toda a plataforma.
+model Permission {
+  id          String  @id @default(uuid()) @db.Uuid
+  key         String  @unique
+  description String?
+
+  rolePermissions RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       String     @db.Uuid
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permissionId String     @db.Uuid
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@index([permissionId])
+  @@map("role_permissions")
+}
+
+model UserRole {
+  userId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  roleId String @db.Uuid
+  role   Role   @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  assignedAt DateTime @default(now())
+
+  @@id([userId, roleId])
+  @@index([roleId])
+  @@map("user_roles")
+}
+
+// ---------------------------------------------------------------------------
+// Vínculo com o vendedor do Omie
+// ---------------------------------------------------------------------------
+
+/// defaultPriceTableId e maxDiscountPercent NÃO existem na API de vendedores da
+/// Omie (confirmado em docs/omie-api-mapping.md §6) — são exclusivamente locais.
+model SellerLink {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  userId String @unique @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// `codigo` do cadastro de vendedores da Omie.
+  omieSellerId   Int
+  /// `codInt` (código de integração) do vendedor, quando existir.
+  omieSellerCode String?
+  displayName    String
+  active         Boolean @default(true)
+
+  defaultPriceTableId Int?
+  maxDiscountPercent  Decimal @default(0) @db.Decimal(5, 2)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  salesDocuments SalesDocument[]
+
+  @@unique([organizationId, omieSellerId])
+  @@index([organizationId, active])
+  @@map("seller_links")
+}
+
+// ---------------------------------------------------------------------------
+// Auditoria
+// ---------------------------------------------------------------------------
+
+model AuditLog {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  /// Nulo para eventos sem ator identificado (ex.: falha de login com e-mail inexistente).
+  actorUserId String? @db.Uuid
+  actor       User?   @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  action     String
+  entityType String
+  entityId   String?
+
+  /// Dados sensíveis já mascarados antes da gravação (src/lib/masking.ts).
+  beforeData Json?
+  afterData  Json?
+
+  ipAddress     String?
+  userAgent     String?
+  correlationId String?
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId, createdAt])
+  @@index([organizationId, entityType, entityId])
+  @@index([organizationId, actorUserId])
+  @@map("audit_logs")
+}
+
+// ---------------------------------------------------------------------------
+// Catálogo e estoque (cache local do Omie) — Fase 5
+//
+// Estas entidades são ESPELHO do Omie, não fonte da verdade. Toda uma carrega
+// os campos de sincronização da seção 17 do briefing, e nenhuma delas pode ser
+// usada sozinha para confirmar uma venda: preço e estoque são revalidados
+// diretamente na Omie antes de fechar pedido.
+// ---------------------------------------------------------------------------
+
+enum SyncStatus {
+  LOCAL_ONLY
+  PENDING
+  PROCESSING
+  SYNCED
+  FAILED
+  CONFLICT
+  STALE
+}
+
+model ProductFamily {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  omieId Int
+  name   String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  products Product[]
+
+  @@unique([organizationId, omieId])
+  @@map("product_families")
+}
+
+model Product {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  /// `codigo_produto` no Omie.
+  omieId          Int
+  /// `codigo_produto_integracao`.
+  integrationCode String?
+  /// `codigo` — o SKU que o vendedor procura.
+  sku             String?
+  description     String
+  unit            String?
+  ncm             String?
+  ean             String?
+  /// Preço base do cadastro. NÃO é o preço de venda: este vem da tabela de
+  /// preço aplicável, resolvida pela regra de precedência da organização.
+  basePrice       Decimal?     @db.Decimal(18, 6)
+  active          Boolean      @default(true)
+
+  familyId String?        @db.Uuid
+  family   ProductFamily? @relation(fields: [familyId], references: [id], onDelete: SetNull)
+
+  syncStatus    SyncStatus @default(SYNCED)
+  lastSyncAt    DateTime?
+  lastSyncError String?
+  /// Momento em que o Omie alterou o registro, quando conhecido. Protege contra
+  /// aplicar um evento fora de ordem sobre um dado mais novo.
+  sourceUpdatedAt DateTime?
+  version       Int        @default(0)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  inventory InventoryPosition[]
+  priceItems PriceTableItem[]
+  favorites ProductFavorite[]
+  recentViews ProductRecentView[]
+  salesItems SalesDocumentItem[]
+
+  @@unique([organizationId, omieId])
+  @@index([organizationId, sku])
+  @@index([organizationId, active])
+  @@index([organizationId, description])
+  @@map("products")
+}
+
+/// Favoritos do vendedor — dado 100% local, sem equivalente no Omie.
+model ProductFavorite {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  productId String   @db.Uuid
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, productId])
+  @@index([userId])
+  @@map("product_favorites")
+}
+
+/// Produtos consultados recentemente, para o atalho no início.
+model ProductRecentView {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  productId String   @db.Uuid
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  viewedAt  DateTime @default(now())
+
+  @@unique([userId, productId])
+  @@index([userId, viewedAt])
+  @@map("product_recent_views")
+}
+
+model Warehouse {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  /// `codigo_local_estoque`.
+  omieId           Int
+  code             String?
+  name             String?
+  isDefault        Boolean @default(false)
+  active           Boolean @default(true)
+  availableForSale Boolean @default(true)
+
+  lastSyncAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  inventory InventoryPosition[]
+
+  @@unique([organizationId, omieId])
+  @@map("warehouses")
+}
+
+/// Posição de estoque por produto e local.
+///
+/// Os componentes brutos ficam separados do disponível calculado de propósito:
+/// a fórmula é escolha configurável da organização (AvailableStockRule), então
+/// guardamos o que o Omie informou e recalculamos o exibido conforme a regra.
+model InventoryPosition {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  productId   String    @db.Uuid
+  product     Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  warehouseId String    @db.Uuid
+  warehouse   Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+
+  physical    Decimal? @db.Decimal(18, 6)
+  reserved    Decimal? @db.Decimal(18, 6)
+  expectedOut Decimal? @db.Decimal(18, 6)
+  expectedIn  Decimal? @db.Decimal(18, 6)
+  /// `nDisponivel` conforme devolvido pelo Omie, sem recálculo nosso.
+  omieAvailable Decimal? @db.Decimal(18, 6)
+  minStock    Decimal? @db.Decimal(18, 6)
+  averageCost Decimal? @db.Decimal(18, 6)
+
+  /// Momento da leitura na Omie. Alimenta o indicador de dado desatualizado.
+  readAt     DateTime
+  syncStatus SyncStatus @default(SYNCED)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([productId, warehouseId])
+  @@index([organizationId, readAt])
+  @@map("inventory_positions")
+}
+
+// ---------------------------------------------------------------------------
+// Clientes
+// ---------------------------------------------------------------------------
+
+model Customer {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  /// Nulo enquanto o cliente existe apenas como rascunho local.
+  omieId Int?
+  /// `codigo_cliente_integracao` — gerado UMA vez e reutilizado em todo retry.
+  integrationCode String
+  /// Somente dígitos. A unicidade por organização depende dessa normalização.
+  document   String  @db.VarChar(14)
+  legalName  String
+  tradeName  String?
+  email      String?
+  phone      String?
+  active     Boolean @default(true)
+
+  /// Vendedor dono do cliente — é o que o escopo `customers.read_own` filtra.
+  ownerSellerLinkId String? @db.Uuid
+
+  /// Tabela de preço específica do cliente, primeira na ordem de precedência.
+  /// Decisão local: não foi possível confirmar campo equivalente no cadastro
+  /// de clientes do Omie (docs/omie-api-mapping.md §7).
+  priceTableId String? @db.Uuid
+
+  syncStatus    SyncStatus @default(LOCAL_ONLY)
+  lastSyncAt    DateTime?
+  lastSyncAttemptAt DateTime?
+  syncAttempts  Int        @default(0)
+  lastSyncError String?
+  version       Int        @default(0)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  addresses      CustomerAddress[]
+  salesDocuments SalesDocument[]
+
+  @@unique([organizationId, integrationCode])
+  @@unique([organizationId, document])
+  @@index([organizationId, legalName])
+  @@index([organizationId, ownerSellerLinkId])
+  @@index([organizationId, omieId])
+  @@map("customers")
+}
+
+model CustomerAddress {
+  id         String   @id @default(uuid()) @db.Uuid
+  customerId String   @db.Uuid
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  street     String?
+  number     String?
+  complement String?
+  district   String?
+  city       String?
+  state      String? @db.VarChar(2)
+  /// Somente dígitos.
+  zipCode    String? @db.VarChar(8)
+
+  isDefault Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([customerId])
+  @@map("customer_addresses")
+}
+
+// ---------------------------------------------------------------------------
+// Tabelas de preço
+// ---------------------------------------------------------------------------
+
+model PriceTable {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  /// `nCodTabPreco`.
+  omieId Int
+  name   String?
+  code   String?
+  active Boolean @default(true)
+
+  lastSyncAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  items PriceTableItem[]
+
+  @@unique([organizationId, omieId])
+  @@map("price_tables")
+}
+
+model PriceTableItem {
+  id           String     @id @default(uuid()) @db.Uuid
+  priceTableId String     @db.Uuid
+  priceTable   PriceTable @relation(fields: [priceTableId], references: [id], onDelete: Cascade)
+
+  productId String  @db.Uuid
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  price Decimal? @db.Decimal(18, 6)
+  /// `nDescMaximo` do Omie. Combina com o limite do vendedor: prevalece o menor.
+  maxDiscountPercent       Decimal? @db.Decimal(5, 2)
+  suggestedDiscountPercent Decimal? @db.Decimal(5, 2)
+
+  lastSyncAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@unique([priceTableId, productId])
+  @@index([productId])
+  @@map("price_table_items")
+}
+
+// ---------------------------------------------------------------------------
+// Idempotência
+// ---------------------------------------------------------------------------
+
+/// Chave de idempotência de operações críticas (briefing §16 e §33).
+///
+/// A constraint única é o que realmente impede duplo clique de gerar dois
+/// registros — o botão desabilitado na UI é só a primeira camada, e ela sozinha
+/// não protege nada.
+model IdempotencyKey {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  /// Escopo da operação, ex.: "customer.create".
+  scope String
+  key   String
+
+  entityType String?
+  entityId   String?
+  /// Resposta cacheada, devolvida quando a mesma chave é reenviada.
+  result     Json?
+  status     String   @default("IN_PROGRESS")
+
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+
+  @@unique([organizationId, scope, key])
+  @@index([expiresAt])
+  @@map("idempotency_keys")
+}
+
+// ---------------------------------------------------------------------------
+// Orçamentos e pedidos — Fase 5
+//
+// DESVIO DELIBERADO em relação a docs/database-model.md, justificado pela
+// pesquisa da API: no Omie, orçamento e pedido são o MESMO registro
+// (`PedidoVendaProduto`), diferenciados pelo campo `etapa` — converter é
+// `TrocarEtapaPedido` sobre o mesmo `codigo_pedido`, não uma nova inclusão.
+//
+// Modelar duas tabelas locais faria um único registro Omie corresponder a duas
+// linhas nossas, que poderiam divergir. Usamos UMA entidade com um
+// discriminador `kind`, preservando `omieId` e `integrationCode` na conversão.
+// As telas de "Orçamentos" e "Pedidos" são a mesma consulta com filtros
+// diferentes.
+// ---------------------------------------------------------------------------
+
+enum SalesDocumentKind {
+  QUOTE
+  ORDER
+}
+
+enum SalesDocumentStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  SYNC_PENDING
+  SYNCING
+  SYNCED
+  SYNC_FAILED
+  EXPIRED
+  CONVERTED
+  CANCELLED
+}
+
+model SalesDocument {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  kind   SalesDocumentKind   @default(QUOTE)
+  status SalesDocumentStatus @default(DRAFT)
+
+  /// Número sequencial local, visível ao vendedor antes de existir no Omie.
+  localNumber Int
+
+  /// `codigo_pedido_integracao` — gerado UMA vez, preservado na conversão.
+  integrationCode String
+  /// `codigo_pedido` (identificador interno do Omie).
+  omieId          Int?
+  /// `numero_pedido` (string), que é o número visível no ERP.
+  omieNumber      String?
+  /// Etapa atual no Omie ("00" = orçamento).
+  omieStage       String? @db.VarChar(2)
+
+  sellerLinkId String     @db.Uuid
+  sellerLink   SellerLink @relation(fields: [sellerLinkId], references: [id], onDelete: Restrict)
+  /// Preenchido quando um admin cria em nome de outro vendedor (auditado).
+  createdByUserId String? @db.Uuid
+
+  customerId String   @db.Uuid
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Restrict)
+
+  /// `codigo_parcela` da Omie.
+  paymentTermCode String? @db.VarChar(3)
+  expectedDate    DateTime?
+  validUntil      DateTime?
+  notes           String?
+
+  subtotal      Decimal @default(0) @db.Decimal(18, 2)
+  discountTotal Decimal @default(0) @db.Decimal(18, 2)
+  shipping      Decimal @default(0) @db.Decimal(18, 2)
+  otherCosts    Decimal @default(0) @db.Decimal(18, 2)
+  total         Decimal @default(0) @db.Decimal(18, 2)
+
+  syncStatus        SyncStatus @default(LOCAL_ONLY)
+  lastSyncAt        DateTime?
+  lastSyncAttemptAt DateTime?
+  syncAttempts      Int        @default(0)
+  lastSyncError     String?
+  version           Int        @default(0)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  items    SalesDocumentItem[]
+  attempts IntegrationAttempt[]
+  approval ApprovalRequest?
+
+  @@unique([organizationId, integrationCode])
+  @@unique([organizationId, localNumber])
+  @@index([organizationId, kind, status])
+  @@index([organizationId, sellerLinkId])
+  @@index([organizationId, customerId])
+  @@map("sales_documents")
+}
+
+model SalesDocumentItem {
+  id         String        @id @default(uuid()) @db.Uuid
+  documentId String        @db.Uuid
+  document   SalesDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  productId String  @db.Uuid
+  product   Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  /// `codigo_item_integracao`, exigido pela Omie em cada item de `det`.
+  itemIntegrationCode String
+
+  quantity  Decimal @db.Decimal(18, 6)
+  /// Preço de tabela antes do desconto — preservado para auditoria.
+  listUnitPrice Decimal @db.Decimal(18, 6)
+  unitPrice     Decimal @db.Decimal(18, 6)
+  discountPercent Decimal @default(0) @db.Decimal(5, 2)
+  lineTotal     Decimal @db.Decimal(18, 2)
+
+  /// Qual tabela produziu o preço, e por qual regra de precedência.
+  priceTableId  String? @db.Uuid
+  priceSource   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([documentId, productId])
+  @@index([productId])
+  @@map("sales_document_items")
+}
+
+/// Registro de cada tentativa de escrita na Omie (briefing §16).
+///
+/// É o que permite responder "esta operação chegou a ser enviada?" depois de um
+/// timeout, sem depender de log de aplicação.
+model IntegrationAttempt {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+
+  documentId String?        @db.Uuid
+  document   SalesDocument? @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  entityType     String
+  entityId       String?
+  omieCall       String
+  idempotencyKey String
+  attemptNumber  Int    @default(1)
+
+  outcome         String
+  omieCode        String?
+  omieDescription String?
+  correlationId   String?
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId, entityType, entityId])
+  @@index([organizationId, createdAt])
+  @@map("integration_attempts")
+}
+
+model ApprovalRequest {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+
+  documentId String        @unique @db.Uuid
+  document   SalesDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  requestedByUserId String  @db.Uuid
+  approvedByUserId  String? @db.Uuid
+
+  reason           String
+  requestedPercent Decimal @db.Decimal(5, 2)
+  ceilingPercent   Decimal @db.Decimal(5, 2)
+  status           String  @default("PENDING")
+  decidedAt        DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, status])
+  @@map("approval_requests")
+}

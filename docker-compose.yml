@@ -1,0 +1,70 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: marinomie-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: marinomie
+      POSTGRES_PASSWORD: marinomie
+      POSTGRES_DB: marinomie
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U marinomie -d marinomie"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: marinomie-redis
+    restart: unless-stopped
+    # appendonly garante que locks e filas sobrevivam a um restart do container.
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: marinomie-app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: development
+      APP_URL: http://localhost:3000
+      DATABASE_URL: postgresql://marinomie:marinomie@postgres:5432/marinomie?schema=public
+      REDIS_URL: redis://redis:6379
+      OMIE_MOCK_MODE: "true"
+      # Valores de desenvolvimento apenas. Em produção vêm do gerenciador de
+      # segredos do ambiente, nunca de arquivo versionado.
+      AUTH_SECRET: ${AUTH_SECRET:-desenvolvimento-local-segredo-de-32-caracteres}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-0000000000000000000000000000000000000000000000000000000000000000}
+    ports:
+      - "3000:3000"
+    volumes:
+      - .:/app
+      - /app/node_modules
+      - /app/.next
+    command: sh -c "npx prisma migrate deploy && npm run dev"
+
+  # O serviço de workers (filas BullMQ) entra na Fase 6, quando existirem filas
+  # de fato. Adicioná-lo agora seria um container que não faz nada.
+
+volumes:
+  postgres-data:
+  redis-data:
