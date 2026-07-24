@@ -17,8 +17,7 @@ function createRedis(): Redis {
   const env = getEnv();
   const client = new Redis(env.REDIS_URL, {
     maxRetriesPerRequest: 3,
-    // Conecta no primeiro comando, não no import do módulo: importar este
-    // arquivo durante o build não deve abrir socket nem poluir o log.
+    // Conecta no primeiro comando, não na construção.
     lazyConnect: true,
   });
 
@@ -29,11 +28,28 @@ function createRedis(): Redis {
   return client;
 }
 
-export const redis: Redis = globalForRedis.redis ?? createRedis();
-
-if (process.env.NODE_ENV !== "production") {
-  globalForRedis.redis = redis;
+function resolveRedis(): Redis {
+  if (globalForRedis.redis) return globalForRedis.redis;
+  const client = createRedis();
+  globalForRedis.redis = client;
+  return client;
 }
+
+/**
+ * Proxy com inicialização preguiçosa, pelo mesmo motivo do Prisma: construir no
+ * import do módulo faria `next build` exigir `REDIS_URL`, que só existe em
+ * runtime. Ver comentário em `src/server/db.ts`.
+ */
+export const redis: Redis = new Proxy({} as Redis, {
+  get(_target, property, _receiver) {
+    const client = resolveRedis();
+    const value = Reflect.get(client as object, property, client);
+    return typeof value === "function" ? value.bind(client) : value;
+  },
+  has(_target, property) {
+    return Reflect.has(resolveRedis() as object, property);
+  },
+});
 
 /** Chave de cache com isolamento obrigatório por organização (briefing §21). */
 export function cacheKey(

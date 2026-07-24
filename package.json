@@ -22,7 +22,8 @@
     "check": "npm run typecheck && npm run lint && npm run test",
     "lint:fix": "eslint . --fix",
     "worker": "tsx --tsconfig tsconfig.worker.json src/workers/index.ts",
-    "worker:dev": "tsx watch --tsconfig tsconfig.worker.json src/workers/index.ts"
+    "worker:dev": "tsx watch --tsconfig tsconfig.worker.json src/workers/index.ts",
+    "postinstall": "prisma generate"
   },
   "repository": {
     "type": "git",

@@ -4,6 +4,8 @@ import { getActor } from "@/server/auth/actor";
 import { LoginForm } from "./login-form";
 
 export const metadata: Metadata = { title: "Entrar · marinomie" };
+// Verifica sessão a cada requisição; nunca pré-renderizar em build.
+export const dynamic = "force-dynamic";
 
 export default async function LoginPage(): Promise<React.JSX.Element> {
   // Quem já está autenticado não precisa ver o formulário.

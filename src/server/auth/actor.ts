@@ -2,7 +2,7 @@ import "server-only";
 import { headers } from "next/headers";
 import { forbidden, unauthorized } from "next/navigation";
 import { cache } from "react";
-import { auth } from "./auth";
+import { getAuth } from "./auth";
 import { prisma } from "@/server/db";
 import { logger } from "@/lib/logger";
 import type { ActorContext } from "@/domain/permissions/authorize";
@@ -21,7 +21,13 @@ import { isPermissionKey } from "@/domain/permissions/catalog";
  * chamadas a `requirePermission` numa mesma render não geram N queries.
  */
 export const getActor = cache(async (): Promise<ActorContext | null> => {
-  const session = await auth.api.getSession({ headers: await headers() });
+  // `headers()` precisa ser avaliado ANTES de `getAuth()`: é a chamada a
+  // `headers()` que sinaliza ao Next que a rota é dinâmica. Como `getAuth()`
+  // lê variáveis de ambiente na primeira chamada, resolvê-lo primeiro faz o
+  // erro de env acontecer antes do Next saber que não deve pré-renderizar a
+  // página — foi exatamente o que quebrou o build sem `.env` no deploy.
+  const requestHeaders = await headers();
+  const session = await getAuth().api.getSession({ headers: requestHeaders });
   if (!session?.user?.id) return null;
 
   const user = await prisma.user.findUnique({

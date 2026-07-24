@@ -10,7 +10,11 @@ import { hasAnyPermission, hasPermission } from "@/domain/permissions/authorize"
  * O layout já barra quem não tem nenhuma permissão administrativa, mas isso é
  * apenas a primeira camada: cada página administrativa exige a sua própria
  * permissão específica via `requirePermission` (docs/permissions.md §4).
+ *
+ * `force-dynamic` explícito pelo mesmo motivo do shell do vendedor: nada aqui
+ * pode ser pré-renderizado em build.
  */
+export const dynamic = "force-dynamic";
 export default async function AdminLayout({
   children,
 }: {
