@@ -5,6 +5,7 @@ import { hasPermission } from "@/domain/permissions/authorize";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { isMockMode } from "@/integrations/omie";
 import { CredentialForm } from "./credential-form";
+import { SyncCatalogButton } from "./sync-button";
 
 export const metadata: Metadata = { title: "Integrações · marinomie" };
 
@@ -100,13 +101,24 @@ export default async function AdminIntegrationsPage(): Promise<React.JSX.Element
         </Card>
       )}
 
+      {hasPermission(actor, "integrations.sync") && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Sincronização manual</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <SyncCatalogButton />
+          </CardContent>
+        </Card>
+      )}
+
       <Card>
         <CardHeader>
           <CardTitle>Ainda não disponível</CardTitle>
         </CardHeader>
         <CardContent className="text-sm text-muted-foreground">
           <ul className="list-inside list-disc space-y-1">
-            <li>Sincronizações de produtos, estoque e clientes (Fases 5 e 6)</li>
+            <li>Sincronização automática em background (Fase 6)</li>
             <li>Jobs pendentes/falhos e reprocessamento (Fase 6)</li>
             <li>Webhooks recebidos e eventos duplicados (Fase 6)</li>
           </ul>

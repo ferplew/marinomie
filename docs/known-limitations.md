@@ -87,9 +87,34 @@ de conexão.
 - Os serviços de pedido/orçamento (`produtos/pedido`) ainda não têm service —
   entram na Fase 5, junto com a idempotência de escrita.
 
+## 5. Limitações da Fase 5 (catálogo, estoque e clientes)
+
+- **Sincronização é manual e limitada a 5 páginas** por execução, rodando no
+  próprio request. Enquanto as filas da Fase 6 não existirem, um catálogo maior
+  que ~250 itens não será totalmente sincronizado numa única ação. O botão diz
+  isso ao administrador.
+- **Não há sincronização automática em background.** O catálogo envelhece até
+  alguém clicar em sincronizar. O indicador de "última sincronização" existe
+  justamente para que isso seja visível, não silencioso.
+- **Estoque só é atualizado sob demanda**, produto a produto, pelo botão
+  "atualizar estoque". Não há varredura periódica.
+- **A regra `CUSTOM` de disponibilidade não tem implementação.** Escolhê-la faz
+  toda posição ser reportada como indeterminada, em vez de cair silenciosamente
+  numa fórmula arbitrária.
+- **A resolução de preço por tabela não está ligada a nenhuma tela.** O módulo
+  está implementado e testado (precedência, teto de desconto, totais), mas quem
+  o consome é o carrinho de orçamento — que é a parte pendente da fase. A tela
+  de produto mostra o preço do cadastro e diz explicitamente que o preço de
+  venda vem da tabela aplicável.
+- **Tabelas de preço ainda não são sincronizadas** para o cache local: falta o
+  `ListarTabelasPreco`, não implementado por não ter o nome do array confirmado.
+- **Edição de cliente ainda não existe** — só criação e consulta.
+- A busca usa `contains` case-insensitive. Suficiente para o volume de uma
+  distribuidora; um catálogo muito grande pediria índice GIN com trigram.
+
 **Ainda NÃO existe** (não confundir com pronto):
-- Nenhum módulo comercial: produtos, estoque, clientes, orçamentos e pedidos são
-  telas de placeholder que declaram a própria ausência. Fase 5.
+- Orçamentos e pedidos — o coração do produto. É o que falta para fechar a
+  Fase 5.
 - Nenhuma fila, worker, webhook ou reconciliação. Fase 6.
 - Incremento automático de tentativas falhas de login, recuperação de senha, MFA
   e tela de revogação de sessões (campos existem no schema e o bloqueio é

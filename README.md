@@ -4,13 +4,14 @@ Plataforma comercial integrada ao **Omie ERP** — camada de OMS comercial para
 vendedores internos e externos: catálogo, consulta de estoque, clientes,
 orçamentos e pedidos, com sincronização confiável, auditoria e idempotência.
 
-> **Estado atual: Fases 1 a 4 concluídas** (descoberta, arquitetura, fundação e
-> integração Omie). Existem autenticação, RBAC no servidor, multiempresa,
-> auditoria, painel administrativo e o client de integração completo — rate
-> limiter, retry com backoff e jitter, circuit breaker, classificação de erro,
-> mappers, paginação retomável, modo mock e credenciais cifradas em repouso.
-> Os módulos comerciais (produtos, estoque, clientes, orçamentos, pedidos) ainda
-> são telas de placeholder que declaram a própria ausência — Fase 5.
+> **Estado atual: Fases 1 a 4 concluídas + Fase 5 parcial** (descoberta, arquitetura, fundação,
+> integração Omie e módulos comerciais de leitura/cadastro). Existem
+> autenticação, RBAC no servidor, multiempresa, auditoria, painel
+> administrativo, client de integração completo (rate limiter, retry com backoff
+> e jitter, circuit breaker, modo mock, credenciais cifradas), **catálogo de
+> produtos com busca, consulta de estoque com regra configurável e cadastro de
+> clientes com validação de CPF/CNPJ e idempotência**.
+> **Faltam orçamentos e pedidos** para fechar a Fase 5.
 > Ver [`docs/development-roadmap.md`](docs/development-roadmap.md) e
 > [`docs/known-limitations.md`](docs/known-limitations.md).
 

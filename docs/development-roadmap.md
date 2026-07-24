@@ -67,18 +67,33 @@ Decisões de projeto verificadas por teste:
 - **Teto de desconto** é o menor entre o `nDescMaximo` da tabela Omie e o limite
   do vendedor.
 
-## Fase 5 — Módulos comerciais
-1. Produtos: listagem paginada, busca, detalhe, favoritos/recentes.
-2. Estoque: exibição por permissão, indicador de última sincronização/stale.
-3. Clientes: busca, cadastro (validação CPF/CNPJ, dedupe), edição, histórico.
-4. Tabelas de preço e regra de precedência + validação de desconto no backend.
-5. Orçamentos: fluxo rápido de venda (cliente → produto → carrinho → revisão →
-   salvar/enviar), idempotência de envio.
-6. Pedidos: conversão de orçamento, criação direta, acompanhamento de status.
+## Fase 5 — Módulos comerciais (parcial: catálogo, estoque e clientes ✅)
 
-**Critério de aceite:** um orçamento pode ser criado, salvo e enviado (se a
-API suportar o fluxo confirmado em `omie-api-mapping.md` §3); um pedido pode
-ser criado sem duplicidade sob clique duplo (teste automatizado dedicado).
+**Entregue e verificado:**
+1. ✅ Produtos: listagem paginada, busca por SKU/descrição/EAN com debounce, detalhe, favoritos e produtos recentes.
+2. ✅ Estoque: regra `AvailableStockRule` configurável com margem de segurança, consolidação por local, exibição condicionada à permissão e indicador de dado desatualizado.
+3. ✅ Clientes: busca com escopo `_own`/`_all` aplicado na query, cadastro com validação real de CPF/CNPJ, deduplicação por documento e idempotência de envio.
+4. ✅ Sincronização manual de catálogo e locais de estoque pelo painel administrativo (limitada a 5 páginas por execução enquanto não há filas).
+5. ✅ Núcleo de precificação pronto e testado: precedência de tabela configurável, teto de desconto combinando Omie + vendedor, e cálculo de totais em Decimal.
+
+**Ainda pendente nesta fase:**
+6. ⬜ Orçamentos: fluxo rápido de venda (cliente → produto → carrinho → revisão → salvar/enviar) e envio ao Omie com `etapa: "00"`.
+7. ⬜ Pedidos: conversão de orçamento via `TrocarEtapaPedido`, acompanhamento de etapa e histórico.
+8. ⬜ Ligar a resolução de preço às telas — o módulo existe e é testado, mas ainda não há tela que o consuma, porque quem o consome é o carrinho.
+
+**Critério de aceite parcial — cumprido e verificado** contra Postgres e Redis
+reais, em modo mock: catálogo sincronizado (4 produtos, 2 locais); produto
+inativo excluído da listagem; busca por SKU retornando o item correto; posição
+de estoque lida da Omie e persistida; **o vendedor sem `products.view_physical_stock`
+não recebe os campos físico e reservado no payload** (verificado por ausência no
+HTML, não só por não estarem visíveis), enquanto o administrador recebe;
+disponível exibido = 50 pela regra `OMIE_CALCULATED`, não 80 (o físico);
+cliente criado com CPF válido e enviado ao Omie; CPF de dígitos repetidos
+recusado antes de qualquer chamada; documento duplicado bloqueado, com apenas 1
+registro no banco.
+
+86 testes novos (274 no total) cobrindo disponibilidade de estoque, precificação
+e validação de documento.
 
 ## Fase 6 — Sincronização e confiabilidade
 1. Filas BullMQ (`omie-products-sync`, `omie-inventory-sync`,

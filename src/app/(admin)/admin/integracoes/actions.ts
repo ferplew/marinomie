@@ -15,6 +15,8 @@ import {
   saveOmieCredentials,
   setIntegrationActive,
 } from "@/integrations/omie";
+import { syncProductsPage } from "@/domain/products/catalog.service";
+import { syncWarehouses } from "@/domain/inventory/stock.service";
 
 /**
  * Server Actions do painel de integração.
@@ -143,6 +145,74 @@ export async function testConnectionAction(): Promise<
     }
 
     return { ok: true, data: { detail: result.detail, mock: isMockMode() } };
+  } catch (error) {
+    return fail(error, correlationId);
+  }
+}
+
+/**
+ * Sincronização manual de catálogo, locais de estoque e clientes.
+ *
+ * Roda de forma síncrona e **limitada a poucas páginas** de propósito: sem as
+ * filas da Fase 6, uma varredura completa do catálogo bloquearia a requisição e
+ * consumiria a janela de 240 req/min inteira. O limite é uma restrição honesta,
+ * não um descuido — está registrado em docs/known-limitations.md.
+ */
+export async function syncCatalogAction(): Promise<
+  ActionResult<{ products: number; warehouses: number; pages: number }>
+> {
+  const correlationId = newCorrelationId();
+  const MAX_PAGES = 5;
+
+  try {
+    const actor = await requireActor();
+    assertPermission(actor, "integrations.sync");
+
+    const warehouses = await syncWarehouses(actor.organizationId);
+
+    let products = 0;
+    let pages = 0;
+
+    for (let page = 1; page <= MAX_PAGES; page += 1) {
+      const result = await syncProductsPage(actor.organizationId, {
+        page,
+        pageSize: 50,
+      });
+      pages += 1;
+
+      if (result.failed) {
+        return {
+          ok: false,
+          error: {
+            code: "INTEGRATION_ERROR",
+            message:
+              result.error ??
+              "A sincronização falhou. Verifique a credencial e tente novamente.",
+          },
+        };
+      }
+
+      products += result.upserted;
+      // Página incompleta significa que era a última.
+      if (result.fetched < 50) break;
+    }
+
+    await recordAudit({
+      organizationId: actor.organizationId,
+      actorUserId: actor.userId,
+      action: "integration.sync_requested",
+      entityType: "catalog",
+      afterData: { products, warehouses: warehouses.synced, pages },
+      correlationId,
+    });
+
+    revalidatePath("/produtos");
+    revalidatePath("/admin/integracoes");
+
+    return {
+      ok: true,
+      data: { products, warehouses: warehouses.synced, pages },
+    };
   } catch (error) {
     return fail(error, correlationId);
   }
