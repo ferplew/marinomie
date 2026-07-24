@@ -4,16 +4,19 @@ Plataforma comercial integrada ao **Omie ERP** — camada de OMS comercial para
 vendedores internos e externos: catálogo, consulta de estoque, clientes,
 orçamentos e pedidos, com sincronização confiável, auditoria e idempotência.
 
-> **Estado atual: Fases 1 a 4 concluídas + Fase 5 parcial** (descoberta, arquitetura, fundação,
-> integração Omie e módulos comerciais de leitura/cadastro). Existem
+> **Estado atual: Fases 1 a 6** (descoberta, arquitetura, fundação, integração
+> Omie, módulos comerciais e sincronização). Existem
 > autenticação, RBAC no servidor, multiempresa, auditoria, painel
 > administrativo, client de integração completo (rate limiter, retry com backoff
 > e jitter, circuit breaker, modo mock, credenciais cifradas), **catálogo de
 > produtos com busca, consulta de estoque com regra configurável e cadastro de
 > clientes com validação de CPF/CNPJ e idempotência**.
-> Inclui o fluxo de venda completo: orçamento com preço e desconto validados no
-> servidor, envio ao Omie e conversão em pedido sem duplicar registro.
-> **Faltam filas, webhooks e reconciliação automática** — Fase 6.
+> Inclui o fluxo de venda completo (orçamento com preço e desconto validados no
+> servidor, envio ao Omie, conversão em pedido sem duplicar registro), **filas
+> BullMQ com worker separado, endpoint de webhook e reconciliação**, além da
+> aprovação de desconto.
+> **Falta o agendamento automático** dos jobs — hoje o disparo é manual pelo
+> painel. Ver limitações §7.
 > Ver [`docs/development-roadmap.md`](docs/development-roadmap.md) e
 > [`docs/known-limitations.md`](docs/known-limitations.md).
 
@@ -53,7 +56,11 @@ npm run lint
 npm run test
 npm run build
 npm run db:studio   # inspeção do banco
+npm run worker      # processo de filas (obrigatório para sincronizar)
 ```
+
+O worker roda **separado** do app. Sem ele, os jobs ficam em "na fila" e nada é
+sincronizado. No Docker Compose ele já sobe como serviço próprio.
 
 `OMIE_MOCK_MODE=true` (padrão) permite desenvolver e demonstrar sem credenciais
 reais da Omie.

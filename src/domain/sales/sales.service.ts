@@ -24,6 +24,7 @@ import {
   type PriceCandidate,
 } from "@/domain/pricing/resolve-price";
 import { calculateAvailability } from "@/domain/inventory/availability";
+import { refreshStockFromOmie } from "@/domain/inventory/stock.service";
 
 /**
  * Orçamentos e pedidos.
@@ -465,6 +466,23 @@ export async function submitToOmie(
   }
 
   // Revalidação de estoque antes de enviar.
+  //
+  // Lê direto da Omie, sem cache: este é o momento em que um número velho custa
+  // uma venda a mais do que existe. A leitura atualiza o cache local, e só
+  // depois a checagem roda sobre o dado recém-buscado.
+  await Promise.all(
+    document.items.map((item) =>
+      refreshStockFromOmie(actor.organizationId, item.product.omieId, {
+        priority: "interactive",
+      }).catch(() => {
+        // Falha na releitura não bloqueia o envio: cair para o cache é melhor
+        // que impedir a venda por indisponibilidade momentânea da consulta. A
+        // checagem seguinte usa o que houver.
+        return { ok: false as const };
+      }),
+    ),
+  );
+
   const stockIssue = await checkStock(actor, document.items);
   if (stockIssue) {
     return { kind: "blocked", message: stockIssue };
@@ -966,4 +984,138 @@ export async function getSalesDocument(
       },
     },
   });
+}
+
+
+// ---------------------------------------------------------------------------
+// Aprovação de desconto
+// ---------------------------------------------------------------------------
+
+export interface PendingApproval {
+  readonly id: string;
+  readonly documentId: string;
+  readonly localNumber: number;
+  readonly customerName: string;
+  readonly sellerName: string;
+  readonly requestedPercent: string;
+  readonly ceilingPercent: string;
+  readonly total: string;
+  readonly createdAt: Date;
+}
+
+export async function listPendingApprovals(
+  actor: ActorContext,
+): Promise<readonly PendingApproval[]> {
+  assertPermission(actor, "discounts.approve");
+
+  const rows = await prisma.approvalRequest.findMany({
+    where: orgScope(actor, { status: "PENDING" }),
+    orderBy: { createdAt: "asc" },
+    select: {
+      id: true,
+      documentId: true,
+      requestedPercent: true,
+      ceilingPercent: true,
+      createdAt: true,
+      document: {
+        select: {
+          localNumber: true,
+          total: true,
+          customer: { select: { legalName: true, tradeName: true } },
+          sellerLink: { select: { displayName: true } },
+        },
+      },
+    },
+  });
+
+  return rows.map((row) => ({
+    id: row.id,
+    documentId: row.documentId,
+    localNumber: row.document.localNumber,
+    customerName:
+      row.document.customer.tradeName || row.document.customer.legalName,
+    sellerName: row.document.sellerLink.displayName,
+    requestedPercent: row.requestedPercent.toString(),
+    ceilingPercent: row.ceilingPercent.toString(),
+    total: row.document.total.toString(),
+    createdAt: row.createdAt,
+  }));
+}
+
+/**
+ * Aprova ou recusa um desconto.
+ *
+ * Quem aprova nunca pode ser quem solicitou — mesmo que a pessoa tenha as duas
+ * permissões. Sem essa regra, `discounts.approve` viraria "desconto ilimitado
+ * para mim mesmo", que é exatamente o controle que o fluxo existe para impor.
+ */
+export async function decideApproval(
+  actor: ActorContext,
+  approvalId: string,
+  decision: "APPROVED" | "REJECTED",
+): Promise<{ readonly ok: boolean; readonly message: string }> {
+  assertPermission(actor, "discounts.approve");
+
+  const approval = await prisma.approvalRequest.findFirst({
+    where: orgScope(actor, { id: approvalId, status: "PENDING" }),
+    select: {
+      id: true,
+      documentId: true,
+      requestedByUserId: true,
+      requestedPercent: true,
+      document: { select: { localNumber: true } },
+    },
+  });
+
+  if (!approval) {
+    return { ok: false, message: "Solicitação não encontrada ou já decidida." };
+  }
+
+  if (approval.requestedByUserId === actor.userId) {
+    return {
+      ok: false,
+      message: "Você não pode aprovar um desconto que você mesmo solicitou.",
+    };
+  }
+
+  await prisma.$transaction([
+    prisma.approvalRequest.update({
+      where: { id: approval.id },
+      data: {
+        status: decision,
+        approvedByUserId: actor.userId,
+        decidedAt: new Date(),
+      },
+    }),
+    prisma.salesDocument.update({
+      where: { id: approval.documentId },
+      data: {
+        // Aprovado volta para DRAFT: liberado para envio, mas o envio continua
+        // sendo uma ação explícita do vendedor.
+        status: decision === "APPROVED" ? "DRAFT" : "REJECTED",
+      },
+    }),
+  ]);
+
+  await recordAudit({
+    organizationId: actor.organizationId,
+    actorUserId: actor.userId,
+    action: "quote.approved",
+    entityType: "sales_document",
+    entityId: approval.documentId,
+    afterData: {
+      decision,
+      localNumber: approval.document.localNumber,
+      requestedPercent: approval.requestedPercent.toString(),
+      requestedBy: approval.requestedByUserId,
+    },
+  });
+
+  return {
+    ok: true,
+    message:
+      decision === "APPROVED"
+        ? `Desconto aprovado. O orçamento ${approval.document.localNumber} pode ser enviado.`
+        : `Desconto recusado no orçamento ${approval.document.localNumber}.`,
+  };
 }

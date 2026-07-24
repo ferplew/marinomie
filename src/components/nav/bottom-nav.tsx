@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/cn";
 
-export type NavIcon = "home" | "package" | "users" | "file" | "cart";
+export type NavIcon = "home" | "package" | "users" | "file" | "cart" | "check";
 
 /**
  * `href` reusa o tipo do próprio `Link` para respeitar `typedRoutes`: uma rota
@@ -26,6 +26,7 @@ const ICON_PATHS: Record<NavIcon, string> = {
     "M15 19.5a6 6 0 0 0-12 0M9 11.25a3.75 3.75 0 1 0 0-7.5 3.75 3.75 0 0 0 0 7.5ZM21 19.5a5.25 5.25 0 0 0-4.5-5.2M16.5 11.1a3.75 3.75 0 0 0 0-7.2",
   file: "M14.25 3v5.25H19.5M14.25 3H6.75v18h10.5V8.25L14.25 3Z",
   cart: "M3 3h2.25l2.4 12h9.9l2.1-8.25H6M9.75 20.25a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Zm8.25 0a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z",
+  check: "M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z",
 };
 
 /**

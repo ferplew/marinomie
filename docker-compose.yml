@@ -62,8 +62,32 @@ services:
       - /app/.next
     command: sh -c "npx prisma migrate deploy && npm run dev"
 
-  # O serviço de workers (filas BullMQ) entra na Fase 6, quando existirem filas
-  # de fato. Adicioná-lo agora seria um container que não faz nada.
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: marinomie-worker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: development
+      APP_URL: http://localhost:3000
+      DATABASE_URL: postgresql://marinomie:marinomie@postgres:5432/marinomie?schema=public
+      REDIS_URL: redis://redis:6379
+      OMIE_MOCK_MODE: "true"
+      AUTH_SECRET: ${AUTH_SECRET:-desenvolvimento-local-segredo-de-32-caracteres}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-0000000000000000000000000000000000000000000000000000000000000000}
+    volumes:
+      - .:/app
+      - /app/node_modules
+      - /app/.next
+    # Processo separado do app: um job longo não pode competir com requisições
+    # de vendedor pelo event loop (docs/architecture.md §7).
+    command: npm run worker
 
 volumes:
   postgres-data:

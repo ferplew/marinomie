@@ -10,7 +10,14 @@ import { NextResponse, type NextRequest } from "next/server";
  * `requirePermission` (docs/security.md §2) — que consultam banco e permissões
  * efetivas. Um cookie forjado passa por aqui e é barrado lá.
  */
-const PUBLIC_PATHS = ["/login", "/api/auth", "/api/health", "/api/ready"];
+const PUBLIC_PATHS = [
+  "/login",
+  "/api/auth",
+  "/api/health",
+  "/api/ready",
+  // O webhook autentica pelo token na própria URL, não por sessão.
+  "/api/webhooks",
+];
 
 export default function proxy(request: NextRequest): NextResponse {
   const { pathname } = request.nextUrl;

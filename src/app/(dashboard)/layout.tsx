@@ -34,6 +34,9 @@ export default async function DashboardLayout({
     ...(hasAnyPermission(actor, ["orders.read_all", "orders.read_own"])
       ? ([{ href: "/pedidos", label: "Pedidos", icon: "cart" }] as const)
       : []),
+    ...(hasAnyPermission(actor, ["discounts.approve"])
+      ? ([{ href: "/aprovacoes", label: "Aprovações", icon: "check" }] as const)
+      : []),
   ];
 
   const isAdmin = hasAnyPermission(actor, ["integrations.read", "users.read"]);

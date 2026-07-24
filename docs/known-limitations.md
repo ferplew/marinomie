@@ -89,15 +89,9 @@ de conexão.
 
 ## 5. Limitações do catálogo, estoque e clientes
 
-- **Sincronização é manual e limitada a 5 páginas** por execução, rodando no
-  próprio request. Enquanto as filas da Fase 6 não existirem, um catálogo maior
-  que ~250 itens não será totalmente sincronizado numa única ação. O botão diz
-  isso ao administrador.
-- **Não há sincronização automática em background.** O catálogo envelhece até
-  alguém clicar em sincronizar. O indicador de "última sincronização" existe
-  justamente para que isso seja visível, não silencioso.
-- **Estoque só é atualizado sob demanda**, produto a produto, pelo botão
-  "atualizar estoque". Não há varredura periódica.
+> Os dois primeiros itens desta lista foram **resolvidos na Fase 6**: a
+> sincronização agora roda em fila, sem limite de páginas, e o estoque tem job
+> próprio. O que permanece é a ausência de *agendamento* automático — ver §7.
 - **A regra `CUSTOM` de disponibilidade não tem implementação.** Escolhê-la faz
   toda posição ser reportada como indeterminada, em vez de cair silenciosamente
   numa fórmula arbitrária.
@@ -135,8 +129,37 @@ de conexão.
   documentos com o mesmo número, mas o contador adequado entra com as filas.
 - **Cancelamento e edição de orçamento** ainda não existem.
 
+## 7. Limitações de filas, webhooks e reconciliação (Fase 6)
+
+- **Não há agendamento automático.** As filas e a reconciliação existem e
+  funcionam, mas dependem de disparo manual pelo painel. Repeatable jobs do
+  BullMQ são o próximo passo — sem eles, o catálogo continua envelhecendo até
+  alguém clicar.
+- **Dead-letter não tem painel.** Jobs que esgotam as tentativas vão para a fila
+  `omie-dead-letter` e marcam o `SyncJob` como `DEAD_LETTER`, visível na lista,
+  mas não há botão de reprocessar — exige inspeção manual da fila.
+- **Sincronização de clientes Omie→local não implementada.** O job existe e
+  **falha explicitamente** com essa mensagem, em vez de fingir sucesso. O
+  caminho local→Omie funciona.
+- **Reconciliação de clientes** idem.
+- **Pedido criado direto no Omie não vira registro local.** O webhook atualiza
+  documentos que já existem aqui, mas não cria um a partir de um evento — isso
+  dependeria de `ListarPedidos`, cujo array de resposta não foi confirmado.
+- **A extração de entidade do payload é heurística.** Procura identificadores
+  conhecidos em qualquer profundidade. O que não é reconhecido vira `UNHANDLED`
+  com o payload preservado — nunca um palpite aplicado ao banco. Handlers
+  específicos só serão escritos depois de ver payloads reais.
+- **O token do webhook não é rotacionável pela interface.** Substituir a
+  credencial preserva o token de propósito (regenerá-lo quebraria a configuração
+  no portal da Omie), mas isso significa que rotacionar exige intervenção manual.
+- **A revalidação de estoque no envio não bloqueia se a consulta falhar.** Cai
+  para o cache local: impedir a venda por indisponibilidade momentânea da
+  consulta seria pior que vender com dado de segundos atrás.
+
 **Ainda NÃO existe** (não confundir com pronto):
-- Filas, workers, webhooks e reconciliação automática — Fase 6.
+- Agendamento automático de reconciliação e sincronização.
+- Notificações ao usuário (a tabela existe, nada escreve nela ainda).
+- SSE/tempo real na interface — as telas atualizam por navegação, não por push.
 - Nenhuma fila, worker, webhook ou reconciliação. Fase 6.
 - Incremento automático de tentativas falhas de login, recuperação de senha, MFA
   e tela de revogação de sessões (campos existem no schema e o bloqueio é

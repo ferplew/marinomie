@@ -15,7 +15,7 @@ aceite cumprido.
 
 ## Fase 3 — Fundação ✅
 1. ✅ Estrutura do projeto Next.js 16 (TypeScript estrito, `noUncheckedIndexedAccess`), Tailwind 4, primitivas no padrão shadcn/ui.
-2. ✅ `docker-compose.yml` (Postgres 17, Redis 7, app), `Dockerfile.dev`, `.env.example`. O serviço de worker fica para a Fase 6, quando existirem filas.
+2. ✅ `docker-compose.yml` (Postgres 17, Redis 7, app), `Dockerfile.dev`, `.env.example`. O serviço de worker foi adicionado na Fase 6.
 3. ✅ Prisma 7: schema de organização/identidade/permissões/vínculo de vendedor/auditoria + migration inicial aplicada.
 4. ✅ Autenticação Better Auth (sessão em banco, cadastro público desabilitado, CSRF por `Origin`) e RBAC com `requirePermission`/`requireAnyPermission` no servidor.
 5. ✅ Layout mobile-first com barra inferior + painel administrativo com dados reais (usuários, vendedores, auditoria, estado da integração).
@@ -73,7 +73,7 @@ Decisões de projeto verificadas por teste:
 1. ✅ Produtos: listagem paginada, busca por SKU/descrição/EAN com debounce, detalhe, favoritos e produtos recentes.
 2. ✅ Estoque: regra `AvailableStockRule` configurável com margem de segurança, consolidação por local, exibição condicionada à permissão e indicador de dado desatualizado.
 3. ✅ Clientes: busca com escopo `_own`/`_all` aplicado na query, cadastro com validação real de CPF/CNPJ, deduplicação por documento e idempotência de envio.
-4. ✅ Sincronização manual de catálogo e locais de estoque pelo painel administrativo (limitada a 5 páginas por execução enquanto não há filas).
+4. ✅ Sincronização manual de catálogo e locais de estoque pelo painel administrativo (o limite de 5 páginas por execução foi removido na Fase 6, que move o trabalho para a fila).
 5. ✅ Núcleo de precificação pronto e testado: precedência de tabela configurável, teto de desconto combinando Omie + vendedor, e cálculo de totais em Decimal.
 
 6. ✅ Orçamentos: fluxo rápido de venda em etapas (cliente → produtos → revisão), envio ao Omie com `etapa` configurável, e reconciliação de envio incerto pelo código de integração.
@@ -107,20 +107,42 @@ precificação, validação de documento e o ciclo de pedido de venda.
 (`SalesDocument` com discriminador `kind`), não duas tabelas, porque no Omie são
 o mesmo registro. Justificativa completa em `docs/database-model.md` §6.
 
-## Fase 6 — Sincronização e confiabilidade
-1. Filas BullMQ (`omie-products-sync`, `omie-inventory-sync`,
-   `omie-customers-sync`, `omie-quotes-sync`, `omie-orders-sync`,
-   `omie-webhook-processing`, `omie-reconciliation`, `omie-dead-letter`).
-2. Endpoint de webhook + handler genérico + persistência de payload bruto.
-3. Reconciliação periódica configurável por domínio.
-4. Painel de integração completo (§30 do briefing): status, últimas
-   sincronizações, jobs pendentes/falhos, webhooks recebidos/duplicados,
-   ações de sincronizar/reprocessar/pausar.
-5. Auditoria completa (todas as ações listadas no briefing §25).
+## Fase 6 — Sincronização e confiabilidade ✅ (parcial)
 
-**Critério de aceite:** falha simulada de rede é reprocessada com sucesso via
-painel admin; evento de webhook duplicado é identificado e não reprocessado;
-reconciliação corrige uma divergência simulada.
+**Entregue e verificado:**
+1. ✅ Filas BullMQ (`omie-products-sync`, `omie-inventory-sync`, `omie-customers-sync`, `omie-sales-sync`, `omie-webhook-processing`, `omie-reconciliation`, `omie-dead-letter`) e processo de worker separado (`npm run worker`, serviço no compose).
+2. ✅ Endpoint de webhook com persistência do payload bruto antes de qualquer interpretação, deduplicação por hash e resposta em milissegundos.
+3. ✅ Reconciliação por domínio (produtos, estoque, vendas), disparável pelo painel.
+4. ✅ Painéis de **Sincronizações** (histórico, contadores, disparos) e **Webhooks** (URL, eventos, tópicos observados).
+5. ✅ Dívidas da Fase 5 fechadas: **tela de aprovação de desconto** e **revalidação de estoque direto na Omie no momento do envio**.
+6. ✅ `docs/omie-setup.md` e `docs/webhook-setup.md`.
+
+**Critério de aceite — cumprido e verificado** com Postgres, Redis e **worker
+real rodando**:
+
+| Verificação | Resultado |
+|---|---|
+| Sincronização de catálogo enfileirada | worker processou e **encadeou páginas** (p1→p2→p3, parando na vazia); 4 produtos |
+| Webhook com token inválido | 404 |
+| Webhook de organização inexistente | 404 — **resposta idêntica**, sem permitir enumerar |
+| Evento válido | 200 `accepted` → worker consultou a Omie e criou a posição de estoque |
+| **Payload idêntico reenviado** | 200 `duplicate`, sem segunda linha no banco |
+| Evento sem identificador conhecido | `UNHANDLED` com o bruto preservado, não descartado |
+| Corpo não-JSON | 400 |
+| Envio com desconto pendente | bloqueado |
+| **Auto-aprovação de desconto** | recusada, mesmo com a permissão |
+| Aprovação pelo gerente → envio | liberado e sincronizado |
+| Erros no worker | zero |
+
+13 testes novos (299 no total).
+
+**Dois bugs reais corrigidos durante a verificação:**
+1. O worker **não subia**: `server-only` lança fora do runtime do Next. Corrigido com `tsconfig.worker.json` mapeando o pacote para um stub — a proteção segue ativa no build do Next.
+2. `recordAudit` dependia de `headers()`, então **nenhuma ação originada no worker era auditada**. A leitura de IP/user-agent foi isolada: sem requisição, o evento é gravado sem esses campos em vez de não ser gravado.
+
+**Pendente da Fase 6:** agendamento automático (repeatable jobs) — hoje a
+reconciliação é disparada manualmente; painel de dead-letter com reprocessamento;
+sincronização de clientes Omie→local. Ver `docs/known-limitations.md` §7.
 
 ## Fase 7 — Testes e documentação final
 1. Cobertura de testes unitários (mappers, validações, cálculos de desconto,

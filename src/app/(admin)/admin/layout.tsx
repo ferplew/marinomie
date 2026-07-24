@@ -46,6 +46,16 @@ export default async function AdminLayout({
         show: hasPermission(actor, "integrations.read"),
       },
       {
+        href: "/admin/sincronizacoes",
+        label: "Sincronizações",
+        show: hasPermission(actor, "integrations.read"),
+      },
+      {
+        href: "/admin/webhooks",
+        label: "Webhooks",
+        show: hasPermission(actor, "integrations.read"),
+      },
+      {
         href: "/admin/auditoria",
         label: "Auditoria",
         show: hasPermission(actor, "audit.read"),
