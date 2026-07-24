@@ -54,14 +54,12 @@ export interface AuditInput {
  * também nunca é silenciosa: é logada em nível `error` para investigação.
  */
 export async function recordAudit(input: AuditInput): Promise<void> {
-  try {
-    const requestHeaders = await headers();
-    const ipAddress =
-      requestHeaders.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-      requestHeaders.get("x-real-ip") ??
-      null;
-    const userAgent = requestHeaders.get("user-agent");
+  // IP e user-agent só existem quando há requisição. Um job de worker ou uma
+  // rotina de reconciliação não tem cliente — e a ausência desses campos não
+  // pode impedir a gravação, senão nada originado no worker seria auditado.
+  const { ipAddress, userAgent } = await tryReadRequestContext();
 
+  try {
     await prisma.auditLog.create({
       data: {
         organizationId: input.organizationId,
@@ -87,5 +85,30 @@ export async function recordAudit(input: AuditInput): Promise<void> {
       { action: input.action, entityType: input.entityType, err: String(error) },
       "Falha ao gravar auditoria",
     );
+  }
+}
+
+/**
+ * Lê IP e user-agent quando existe uma requisição.
+ *
+ * `headers()` lança fora de um escopo de requisição — que é o caso normal num
+ * worker. Isolar a chamada aqui é o que garante que uma ação automática ainda
+ * seja auditada, apenas sem os campos de origem do cliente.
+ */
+async function tryReadRequestContext(): Promise<{
+  ipAddress: string | null;
+  userAgent: string | null;
+}> {
+  try {
+    const requestHeaders = await headers();
+    return {
+      ipAddress:
+        requestHeaders.get("x-forwarded-for")?.split(",")[0]?.trim() ??
+        requestHeaders.get("x-real-ip") ??
+        null,
+      userAgent: requestHeaders.get("user-agent"),
+    };
+  } catch {
+    return { ipAddress: null, userAgent: null };
   }
 }

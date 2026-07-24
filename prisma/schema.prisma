@@ -43,6 +43,9 @@ model Organization {
   priceTables     PriceTable[]
   idempotencyKeys IdempotencyKey[]
   salesDocuments  SalesDocument[]
+  webhookEvents   WebhookEvent[]
+  syncJobs        SyncJob[]
+  notifications   Notification[]
 
   @@index([active])
   @@map("organizations")
@@ -827,4 +830,115 @@ model ApprovalRequest {
 
   @@index([organizationId, status])
   @@map("approval_requests")
+}
+
+// ---------------------------------------------------------------------------
+// Filas, webhooks e reconciliação — Fase 6
+// ---------------------------------------------------------------------------
+
+enum WebhookEventStatus {
+  RECEIVED
+  PROCESSING
+  PROCESSED
+  FAILED
+  DUPLICATE
+  /// Recebido, mas o tópico não tem handler específico ainda.
+  UNHANDLED
+}
+
+/// Evento bruto recebido da Omie.
+///
+/// O payload é persistido ANTES de qualquer interpretação (briefing §6). Como a
+/// Omie não publica o schema de cada evento (docs/known-limitations.md §1),
+/// guardar o bruto é o que permite escrever handlers corretos depois de ver
+/// payloads reais — e reprocessar os que chegaram antes disso.
+model WebhookEvent {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  /// Tópico informado pela Omie, quando presente no payload.
+  topic     String?
+  /// Identificador do evento na Omie, quando presente.
+  omieEventId String?
+  /// Hash do payload — usado para detectar entrega duplicada.
+  dedupeKey String
+
+  rawPayload Json
+  status     WebhookEventStatus @default(RECEIVED)
+
+  sourceIp    String?
+  receivedAt  DateTime  @default(now())
+  processedAt DateTime?
+  attempts    Int       @default(0)
+  lastError   String?
+
+  @@unique([organizationId, dedupeKey])
+  @@index([organizationId, status, receivedAt])
+  @@index([organizationId, topic])
+  @@map("webhook_events")
+}
+
+enum SyncJobStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+  DEAD_LETTER
+}
+
+/// Execução de um job de sincronização.
+///
+/// Espelha o que está na fila para dar visibilidade administrativa: a fila do
+/// BullMQ é volátil, esta tabela é o histórico auditável.
+model SyncJob {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  queue      String
+  entityType String
+  /// Id do job no BullMQ, para correlacionar com a fila.
+  bullJobId  String?
+
+  status   SyncJobStatus @default(QUEUED)
+  attempts Int           @default(0)
+
+  /// Cursor de retomada: página em que parou.
+  cursor       Int?
+  totalFetched Int @default(0)
+  totalChanged Int @default(0)
+
+  correlationId String?
+  error         String?
+  triggeredBy   String?
+
+  startedAt  DateTime?
+  finishedAt DateTime?
+  nextRunAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([organizationId, queue, status])
+  @@index([organizationId, createdAt])
+  @@map("sync_jobs")
+}
+
+model Notification {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  /// Nulo para notificações da organização inteira (ex.: integração pausada).
+  userId String? @db.Uuid
+
+  type    String
+  title   String
+  body    String?
+  link    String?
+  readAt  DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId, userId, readAt])
+  @@map("notifications")
 }

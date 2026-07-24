@@ -11,7 +11,12 @@ import { SignOutButton } from "@/components/nav/sign-out-button";
  * A navegação é montada no servidor a partir das permissões efetivas: itens sem
  * permissão não são renderizados. Isso é conveniência de UX, não controle de
  * acesso — cada rota revalida a permissão por conta própria.
+ *
+ * `force-dynamic` é explícito: toda página aqui depende de sessão e banco por
+ * requisição, nunca deve ser pré-renderizada em build. Reforça a proteção que
+ * já existe via `headers()` dentro de `getActor`.
  */
+export const dynamic = "force-dynamic";
 export default async function DashboardLayout({
   children,
 }: {
@@ -33,6 +38,9 @@ export default async function DashboardLayout({
       : []),
     ...(hasAnyPermission(actor, ["orders.read_all", "orders.read_own"])
       ? ([{ href: "/pedidos", label: "Pedidos", icon: "cart" }] as const)
+      : []),
+    ...(hasAnyPermission(actor, ["discounts.approve"])
+      ? ([{ href: "/aprovacoes", label: "Aprovações", icon: "check" }] as const)
       : []),
   ];
 
