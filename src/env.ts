@@ -16,7 +16,16 @@ const envSchema = z.object({
   NODE_ENV: z
     .enum(["development", "test", "production"])
     .default("development"),
-  APP_URL: z.url().default("http://localhost:3000"),
+  // Em produção na Vercel, cai para o domínio estável do projeto em vez de
+  // localhost — sem isso o Better Auth usa localhost como baseURL e rejeita
+  // toda requisição de login vinda do domínio real ("Invalid origin").
+  APP_URL: z
+    .url()
+    .default(
+      process.env["VERCEL_PROJECT_PRODUCTION_URL"]
+        ? `https://${process.env["VERCEL_PROJECT_PRODUCTION_URL"]}`
+        : "http://localhost:3000",
+    ),
 
   DATABASE_URL: z.string().min(1, "DATABASE_URL é obrigatória"),
   REDIS_URL: z.string().min(1, "REDIS_URL é obrigatória"),

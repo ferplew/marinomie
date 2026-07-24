@@ -39,6 +39,17 @@ function buildAuth() {
     appName: "marinomie",
     secret: getEnv().AUTH_SECRET,
     baseURL: getEnv().APP_URL,
+    // A Vercel muda a URL de deployment a cada build (produção e preview).
+    // `APP_URL` cobre só uma delas; sem as demais aqui, login a partir de
+    // qualquer outra URL do mesmo projeto cai em "Invalid origin" (403).
+    trustedOrigins: [
+      getEnv().APP_URL,
+      process.env["VERCEL_URL"] && `https://${process.env["VERCEL_URL"]}`,
+      process.env["VERCEL_BRANCH_URL"] &&
+        `https://${process.env["VERCEL_BRANCH_URL"]}`,
+      process.env["VERCEL_PROJECT_PRODUCTION_URL"] &&
+        `https://${process.env["VERCEL_PROJECT_PRODUCTION_URL"]}`,
+    ].filter((origin): origin is string => Boolean(origin)),
 
     database: prismaAdapter(prisma, {
       provider: "postgresql",
