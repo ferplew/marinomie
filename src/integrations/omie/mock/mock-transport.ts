@@ -23,6 +23,28 @@ import {
  * O que ele **não** faz: simular latência da Omie, ordenação real ou filtros
  * completos. Fica registrado em docs/known-limitations.md.
  */
+/**
+ * Estado dos pedidos criados no mock.
+ *
+ * Guardado por instância seria inútil: o client é um singleton e cada teste
+ * cria o seu. O módulo mantém o estado para que "criar e depois consultar pelo
+ * código de integração" — o fluxo de recuperação após timeout — possa ser
+ * exercitado de verdade.
+ */
+interface MockOrderRecord {
+  codigo_pedido: number;
+  codigo_pedido_integracao: string;
+  numero_pedido: string;
+  etapa: string;
+}
+
+const mockOrders = new Map<string, MockOrderRecord>();
+
+/** Apenas para testes: limpa os pedidos criados no mock. */
+export function resetMockOrders(): void {
+  mockOrders.clear();
+}
+
 export class MockOmieTransport implements OmieTransport {
   readonly mode = "mock" as const;
 
@@ -191,6 +213,101 @@ export class MockOmieTransport implements OmieTransport {
         return found ?? notFound("Vendedor");
       }
 
+      case "IncluirPedido": {
+        const header = objectParam(request.param, "cabecalho");
+        const integrationCode = header
+          ? stringParam(header, "codigo_pedido_integracao")
+          : undefined;
+        const items = Array.isArray(request.param["det"]) ? request.param["det"] : [];
+
+        if (!integrationCode) {
+          // Reproduz a mensagem documentada para campo obrigatório ausente.
+          return {
+            faultcode: "SOAP-ENV:Client-103",
+            faultstring:
+              "O preenchimento da tag [codigo_pedido_integracao] é obrigatório.",
+          };
+        }
+        if (items.length === 0) {
+          return {
+            faultcode: "SOAP-ENV:Client-103",
+            faultstring: "O preenchimento da tag [det] é obrigatório.",
+          };
+        }
+
+        const existing = mockOrders.get(integrationCode);
+        if (existing) {
+          // Mesmo código de integração reenviado: a Omie recusa por duplicidade.
+          return {
+            faultcode: "SOAP-ENV:Client-105",
+            faultstring: `Pedido já cadastrado para o código de integração ${integrationCode}`,
+          };
+        }
+
+        const omieId = 70000 + mockOrders.size + 1;
+        const record = {
+          codigo_pedido: omieId,
+          codigo_pedido_integracao: integrationCode,
+          numero_pedido: String(omieId),
+          etapa: header ? (stringParam(header, "etapa") ?? "10") : "10",
+        };
+        mockOrders.set(integrationCode, record);
+
+        return {
+          codigo_pedido: record.codigo_pedido,
+          codigo_pedido_integracao: record.codigo_pedido_integracao,
+          numero_pedido: record.numero_pedido,
+          codigo_status: "0",
+          descricao_status: "Pedido incluído com sucesso (mock).",
+        };
+      }
+
+      case "ConsultarPedido": {
+        const integrationCode = stringParam(
+          request.param,
+          "codigo_pedido_integracao",
+        );
+        const omieId = numberParam(request.param, "codigo_pedido");
+
+        const record = integrationCode
+          ? mockOrders.get(integrationCode)
+          : [...mockOrders.values()].find((o) => o.codigo_pedido === omieId);
+
+        if (!record) return notFound("Pedido");
+
+        return {
+          cabecalho: {
+            codigo_pedido: record.codigo_pedido,
+            codigo_pedido_integracao: record.codigo_pedido_integracao,
+            numero_pedido: record.numero_pedido,
+            etapa: record.etapa,
+          },
+          total_pedido: { valor_total_pedido: 0 },
+          infoCadastro: { cancelado: "N", faturado: "N" },
+        };
+      }
+
+      case "TrocarEtapaPedido": {
+        const integrationCode = stringParam(
+          request.param,
+          "codigo_pedido_integracao",
+        );
+        const omieId = numberParam(request.param, "codigo_pedido");
+        const stage = stringParam(request.param, "etapa");
+
+        const record = integrationCode
+          ? mockOrders.get(integrationCode)
+          : [...mockOrders.values()].find((o) => o.codigo_pedido === omieId);
+
+        if (!record) return notFound("Pedido");
+        if (stage) record.etapa = stage;
+
+        return {
+          codigo_status: "0",
+          descricao_status: "Etapa alterada com sucesso (mock).",
+        };
+      }
+
       case "ListarTabelaItens":
         return paginateFixture(request.param, [...mockPriceTableItems], {
           arrayKey: "itensTabela",
@@ -226,6 +343,16 @@ function stringParam(
 ): string | undefined {
   const value = param[key];
   return typeof value === "string" ? value : undefined;
+}
+
+function objectParam(
+  param: Record<string, unknown>,
+  key: string,
+): Record<string, unknown> | undefined {
+  const value = param[key];
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
 }
 
 /** Hash determinístico simples, só para gerar ids estáveis no mock. */

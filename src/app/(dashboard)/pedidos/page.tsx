@@ -1,19 +1,26 @@
 import type { Metadata } from "next";
 import { requireAnyPermission } from "@/server/auth/actor";
-import { ModulePlaceholder } from "@/components/module-placeholder";
+import { listSalesDocuments } from "@/domain/sales/sales.service";
+import { SalesDocumentList } from "@/components/sales-document-list";
 
 export const metadata: Metadata = { title: "Pedidos · marinomie" };
 
-export default async function Page(): Promise<React.JSX.Element> {
-  // A permissão já é exigida agora, para que a rota nunca fique aberta por
-  // esquecimento quando o módulo for implementado.
-  await requireAnyPermission(["orders.read_all", "orders.read_own"]);
+/**
+ * Pedidos são o mesmo registro dos orçamentos, filtrados por `kind` — reflexo
+ * direto de como a Omie modela: um recurso, diferenciado pela etapa.
+ */
+export default async function OrdersPage(): Promise<React.JSX.Element> {
+  const actor = await requireAnyPermission(["orders.read_all", "orders.read_own"]);
+  const result = await listSalesDocuments(actor, { kind: "ORDER" });
 
   return (
-    <ModulePlaceholder
-      title="Pedidos"
-      phase="Fase 5"
-      description="Criação de pedido com proteção contra duplicidade, acompanhamento de etapa e status de sincronização."
-    />
+    <div className="space-y-4">
+      <h1 className="text-xl font-semibold tracking-tight">Pedidos</h1>
+      <SalesDocumentList
+        items={result.items}
+        emptyTitle="Nenhum pedido"
+        emptyDescription="Pedidos aparecem aqui quando um orçamento é convertido."
+      />
+    </div>
   );
 }

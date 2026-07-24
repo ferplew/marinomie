@@ -11,7 +11,9 @@ orçamentos e pedidos, com sincronização confiável, auditoria e idempotência
 > e jitter, circuit breaker, modo mock, credenciais cifradas), **catálogo de
 > produtos com busca, consulta de estoque com regra configurável e cadastro de
 > clientes com validação de CPF/CNPJ e idempotência**.
-> **Faltam orçamentos e pedidos** para fechar a Fase 5.
+> Inclui o fluxo de venda completo: orçamento com preço e desconto validados no
+> servidor, envio ao Omie e conversão em pedido sem duplicar registro.
+> **Faltam filas, webhooks e reconciliação automática** — Fase 6.
 > Ver [`docs/development-roadmap.md`](docs/development-roadmap.md) e
 > [`docs/known-limitations.md`](docs/known-limitations.md).
 

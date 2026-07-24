@@ -67,7 +67,7 @@ Decisões de projeto verificadas por teste:
 - **Teto de desconto** é o menor entre o `nDescMaximo` da tabela Omie e o limite
   do vendedor.
 
-## Fase 5 — Módulos comerciais (parcial: catálogo, estoque e clientes ✅)
+## Fase 5 — Módulos comerciais ✅
 
 **Entregue e verificado:**
 1. ✅ Produtos: listagem paginada, busca por SKU/descrição/EAN com debounce, detalhe, favoritos e produtos recentes.
@@ -76,12 +76,11 @@ Decisões de projeto verificadas por teste:
 4. ✅ Sincronização manual de catálogo e locais de estoque pelo painel administrativo (limitada a 5 páginas por execução enquanto não há filas).
 5. ✅ Núcleo de precificação pronto e testado: precedência de tabela configurável, teto de desconto combinando Omie + vendedor, e cálculo de totais em Decimal.
 
-**Ainda pendente nesta fase:**
-6. ⬜ Orçamentos: fluxo rápido de venda (cliente → produto → carrinho → revisão → salvar/enviar) e envio ao Omie com `etapa: "00"`.
-7. ⬜ Pedidos: conversão de orçamento via `TrocarEtapaPedido`, acompanhamento de etapa e histórico.
-8. ⬜ Ligar a resolução de preço às telas — o módulo existe e é testado, mas ainda não há tela que o consuma, porque quem o consome é o carrinho.
+6. ✅ Orçamentos: fluxo rápido de venda em etapas (cliente → produtos → revisão), envio ao Omie com `etapa` configurável, e reconciliação de envio incerto pelo código de integração.
+7. ✅ Pedidos: conversão via `TrocarEtapaPedido` preservando o mesmo registro Omie, com histórico de tentativas de integração visível.
+8. ✅ Resolução de preço ligada ao carrinho, com aprovação de desconto acima do limite do vendedor.
 
-**Critério de aceite parcial — cumprido e verificado** contra Postgres e Redis
+**Critério de aceite — cumprido e verificado** contra Postgres e Redis
 reais, em modo mock: catálogo sincronizado (4 produtos, 2 locais); produto
 inativo excluído da listagem; busca por SKU retornando o item correto; posição
 de estoque lida da Omie e persistida; **o vendedor sem `products.view_physical_stock`
@@ -92,8 +91,21 @@ cliente criado com CPF válido e enviado ao Omie; CPF de dígitos repetidos
 recusado antes de qualquer chamada; documento duplicado bloqueado, com apenas 1
 registro no banco.
 
-86 testes novos (274 no total) cobrindo disponibilidade de estoque, precificação
-e validação de documento.
+**Fluxo de venda verificado ponta a ponta** contra Postgres e Redis reais:
+orçamento criado com preço recalculado no servidor (289,90 com 5% → 275,405
+por item, total 550,81); enviado ao Omie na etapa `"00"`; **reenvio recusado
+como `already_synced`**, sem duplicar; convertido em pedido com o **mesmo
+`omieId`** e etapa `"10"`; some da lista de orçamentos e aparece na de pedidos;
+tentativa de integração registrada. Desconto de 18% (limite do vendedor: 10%)
+gerou `ApprovalRequest` e **bloqueou o envio**; desconto de 80% foi recusado na
+origem pelo teto de aprovação.
+
+98 testes novos (286 no total) cobrindo disponibilidade de estoque,
+precificação, validação de documento e o ciclo de pedido de venda.
+
+**Desvio de projeto documentado:** orçamento e pedido são **uma** entidade local
+(`SalesDocument` com discriminador `kind`), não duas tabelas, porque no Omie são
+o mesmo registro. Justificativa completa em `docs/database-model.md` §6.
 
 ## Fase 6 — Sincronização e confiabilidade
 1. Filas BullMQ (`omie-products-sync`, `omie-inventory-sync`,

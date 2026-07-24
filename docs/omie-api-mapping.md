@@ -140,8 +140,30 @@ Campos principais na inclusão:
 - Itens: `codigo_produto`, `quantidade`, `valor_unitario`.
 - Vendedor: aparece em `informacoes_adicionais.codVend` (opcional) — nossa aplicação **sempre** preenche esse campo no backend a partir do `SellerLink` do usuário autenticado; nunca a partir de um valor vindo do navegador.
 - Tabela de preço no pedido: `codigo_tabela_preco` a nível de produto/item (opcional).
-- Paginação de `ListarPedidos`: `pagina`, `registros_por_pagina` (máx. 100 observado na doc consultada — **confirmar limite exato** antes de assumir).
-- `numero_pedido` é o identificador Omie gerado na resposta de `IncluirPedido` — deve ser armazenado em `Order.omieId`/`Quote.omieId`.
+- Paginação de `ListarPedidos`: `pagina`, `registros_por_pagina`. **O nome do array de resultado NÃO foi confirmado** — por isso `ListarPedidos` não está implementado.
+
+**CORREÇÃO de uma afirmação anterior deste documento.** Uma verificação
+posterior, mais detalhada, mostrou que a estrutura é mais específica do que o
+resumo inicial sugeria:
+
+- `param` contém os objetos de topo `cabecalho` (obrigatório),
+  `informacoes_adicionais` (**obrigatório**, não opcional), `det` (obrigatório),
+  e opcionalmente `frete`, `observacoes`, `departamentos`, `lista_parcelas`
+  (esta obrigatória quando `codigo_parcela = "999"`).
+- Cada item de `det` tem **dois** objetos: `ide` — com
+  `codigo_item_integracao` (string30, **obrigatório**) — e `produto`, com
+  `codigo_produto`, `quantidade`, `valor_unitario` e campos opcionais. Assumir
+  que `det` continha apenas `produto` teria produzido payload inválido.
+- A resposta traz **dois identificadores distintos**: `codigo_pedido` (integer —
+  o id interno, aceito por `ConsultarPedido` e `TrocarEtapaPedido`) e
+  `numero_pedido` (string15 — o número visível no ERP). A afirmação anterior de
+  que `numero_pedido` era "o identificador gerado" estava incompleta: quem
+  identifica nas chamadas seguintes é `codigo_pedido`.
+- `ConsultarPedido` aceita qualquer um dos três: `codigo_pedido`,
+  `codigo_pedido_integracao` ou `numero_pedido`. A consulta pelo código de
+  integração é a base da recuperação após timeout.
+- `TrocarEtapaPedido` recebe `codigo_pedido` ou `codigo_pedido_integracao`, mais
+  `etapa` (string2).
 
 **A confirmar:**
 - Formato exato de erro de `IncluirPedido` em caso de timeout/duplicidade (necessário para a estratégia "consultar antes de repetir" da seção 15/16 do briefing) — validar com `ConsultarPedido` por `codigo_pedido_integracao` em ambiente de teste.

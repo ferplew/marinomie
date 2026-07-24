@@ -42,6 +42,7 @@ model Organization {
   inventory       InventoryPosition[]
   priceTables     PriceTable[]
   idempotencyKeys IdempotencyKey[]
+  salesDocuments  SalesDocument[]
 
   @@index([active])
   @@map("organizations")
@@ -288,6 +289,8 @@ model SellerLink {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  salesDocuments SalesDocument[]
+
   @@unique([organizationId, omieSellerId])
   @@index([organizationId, active])
   @@map("seller_links")
@@ -401,6 +404,7 @@ model Product {
   priceItems PriceTableItem[]
   favorites ProductFavorite[]
   recentViews ProductRecentView[]
+  salesItems SalesDocumentItem[]
 
   @@unique([organizationId, omieId])
   @@index([organizationId, sku])
@@ -534,7 +538,8 @@ model Customer {
   updatedAt DateTime  @updatedAt
   deletedAt DateTime?
 
-  addresses CustomerAddress[]
+  addresses      CustomerAddress[]
+  salesDocuments SalesDocument[]
 
   @@unique([organizationId, integrationCode])
   @@unique([organizationId, document])
@@ -643,4 +648,183 @@ model IdempotencyKey {
   @@unique([organizationId, scope, key])
   @@index([expiresAt])
   @@map("idempotency_keys")
+}
+
+// ---------------------------------------------------------------------------
+// Orçamentos e pedidos — Fase 5
+//
+// DESVIO DELIBERADO em relação a docs/database-model.md, justificado pela
+// pesquisa da API: no Omie, orçamento e pedido são o MESMO registro
+// (`PedidoVendaProduto`), diferenciados pelo campo `etapa` — converter é
+// `TrocarEtapaPedido` sobre o mesmo `codigo_pedido`, não uma nova inclusão.
+//
+// Modelar duas tabelas locais faria um único registro Omie corresponder a duas
+// linhas nossas, que poderiam divergir. Usamos UMA entidade com um
+// discriminador `kind`, preservando `omieId` e `integrationCode` na conversão.
+// As telas de "Orçamentos" e "Pedidos" são a mesma consulta com filtros
+// diferentes.
+// ---------------------------------------------------------------------------
+
+enum SalesDocumentKind {
+  QUOTE
+  ORDER
+}
+
+enum SalesDocumentStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  SYNC_PENDING
+  SYNCING
+  SYNCED
+  SYNC_FAILED
+  EXPIRED
+  CONVERTED
+  CANCELLED
+}
+
+model SalesDocument {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  kind   SalesDocumentKind   @default(QUOTE)
+  status SalesDocumentStatus @default(DRAFT)
+
+  /// Número sequencial local, visível ao vendedor antes de existir no Omie.
+  localNumber Int
+
+  /// `codigo_pedido_integracao` — gerado UMA vez, preservado na conversão.
+  integrationCode String
+  /// `codigo_pedido` (identificador interno do Omie).
+  omieId          Int?
+  /// `numero_pedido` (string), que é o número visível no ERP.
+  omieNumber      String?
+  /// Etapa atual no Omie ("00" = orçamento).
+  omieStage       String? @db.VarChar(2)
+
+  sellerLinkId String     @db.Uuid
+  sellerLink   SellerLink @relation(fields: [sellerLinkId], references: [id], onDelete: Restrict)
+  /// Preenchido quando um admin cria em nome de outro vendedor (auditado).
+  createdByUserId String? @db.Uuid
+
+  customerId String   @db.Uuid
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Restrict)
+
+  /// `codigo_parcela` da Omie.
+  paymentTermCode String? @db.VarChar(3)
+  expectedDate    DateTime?
+  validUntil      DateTime?
+  notes           String?
+
+  subtotal      Decimal @default(0) @db.Decimal(18, 2)
+  discountTotal Decimal @default(0) @db.Decimal(18, 2)
+  shipping      Decimal @default(0) @db.Decimal(18, 2)
+  otherCosts    Decimal @default(0) @db.Decimal(18, 2)
+  total         Decimal @default(0) @db.Decimal(18, 2)
+
+  syncStatus        SyncStatus @default(LOCAL_ONLY)
+  lastSyncAt        DateTime?
+  lastSyncAttemptAt DateTime?
+  syncAttempts      Int        @default(0)
+  lastSyncError     String?
+  version           Int        @default(0)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  items    SalesDocumentItem[]
+  attempts IntegrationAttempt[]
+  approval ApprovalRequest?
+
+  @@unique([organizationId, integrationCode])
+  @@unique([organizationId, localNumber])
+  @@index([organizationId, kind, status])
+  @@index([organizationId, sellerLinkId])
+  @@index([organizationId, customerId])
+  @@map("sales_documents")
+}
+
+model SalesDocumentItem {
+  id         String        @id @default(uuid()) @db.Uuid
+  documentId String        @db.Uuid
+  document   SalesDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  productId String  @db.Uuid
+  product   Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  /// `codigo_item_integracao`, exigido pela Omie em cada item de `det`.
+  itemIntegrationCode String
+
+  quantity  Decimal @db.Decimal(18, 6)
+  /// Preço de tabela antes do desconto — preservado para auditoria.
+  listUnitPrice Decimal @db.Decimal(18, 6)
+  unitPrice     Decimal @db.Decimal(18, 6)
+  discountPercent Decimal @default(0) @db.Decimal(5, 2)
+  lineTotal     Decimal @db.Decimal(18, 2)
+
+  /// Qual tabela produziu o preço, e por qual regra de precedência.
+  priceTableId  String? @db.Uuid
+  priceSource   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([documentId, productId])
+  @@index([productId])
+  @@map("sales_document_items")
+}
+
+/// Registro de cada tentativa de escrita na Omie (briefing §16).
+///
+/// É o que permite responder "esta operação chegou a ser enviada?" depois de um
+/// timeout, sem depender de log de aplicação.
+model IntegrationAttempt {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+
+  documentId String?        @db.Uuid
+  document   SalesDocument? @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  entityType     String
+  entityId       String?
+  omieCall       String
+  idempotencyKey String
+  attemptNumber  Int    @default(1)
+
+  outcome         String
+  omieCode        String?
+  omieDescription String?
+  correlationId   String?
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId, entityType, entityId])
+  @@index([organizationId, createdAt])
+  @@map("integration_attempts")
+}
+
+model ApprovalRequest {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+
+  documentId String        @unique @db.Uuid
+  document   SalesDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  requestedByUserId String  @db.Uuid
+  approvedByUserId  String? @db.Uuid
+
+  reason           String
+  requestedPercent Decimal @db.Decimal(5, 2)
+  ceilingPercent   Decimal @db.Decimal(5, 2)
+  status           String  @default("PENDING")
+  decidedAt        DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, status])
+  @@map("approval_requests")
 }

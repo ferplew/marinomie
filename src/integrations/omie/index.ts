@@ -35,6 +35,7 @@ export * as customersService from "./services/customers.service";
 export * as sellersService from "./services/sellers.service";
 export * as priceTablesService from "./services/price-tables.service";
 export * as connectionService from "./services/connection.service";
+export * as salesOrdersService from "./services/sales-orders.service";
 
 /**
  * O breaker é in-process e por isso precisa sobreviver aos recarregamentos de

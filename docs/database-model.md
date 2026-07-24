@@ -97,9 +97,23 @@ localmente** (persistido no Postgres), **Apenas cache** (Redis, TTL, pode sumir)
 ### QuoteItem
 - `quoteId`, `productId`, `quantity`, `unitPrice`, `originalUnitPrice` (antes do desconto), `discountPercent`, `discountApprovedBy` (nullable), `priceTableId`.
 
-### Order (Pedido)
-- Mesma estrutura de `Quote` (compartilha boa parte do desenho porque no Omie é o mesmo recurso — ver seção 3 do mapping), mas com `stage` (etapa Omie atual), `omieStage`, `convertedFromQuoteId` (nullable), `shippingCarrier`, `installments` (JSON).
-- `OrderItem` espelha `QuoteItem`.
+### Order (Pedido) — **desenho revisado na implementação**
+
+A implementação **não** criou duas tabelas. Como no Omie orçamento e pedido são
+o mesmo registro (`PedidoVendaProduto`, diferenciado por `etapa`), duas tabelas
+locais fariam um único registro do ERP corresponder a duas linhas nossas, que
+poderiam divergir — e a conversão viraria uma cópia de dados em vez do que
+realmente acontece, que é `TrocarEtapaPedido` sobre o mesmo `codigo_pedido`.
+
+O que existe é **uma** entidade `SalesDocument` com discriminador
+`kind: QUOTE | ORDER`, preservando `omieId`, `omieNumber` e `integrationCode` na
+conversão. `SalesDocumentItem` substitui `QuoteItem`/`OrderItem`. As telas de
+"Orçamentos" e "Pedidos" são a mesma consulta com filtro diferente.
+
+Campos relevantes: `kind`, `status` (enum local), `localNumber`,
+`integrationCode`, `omieId`, `omieNumber`, `omieStage`, `sellerLinkId`,
+`createdByUserId` (preenchido quando um admin cria em nome de outro vendedor),
+`customerId`, totais em `Decimal`, e os campos de sincronização da seção 9.
 
 ### IntegrationAttempt
 - Log de cada tentativa de chamada de escrita à Omie (Incluir/Alterar/TrocarEtapa) para `Quote`/`Order`/`Customer`: `id`, `organizationId`, `entityType`, `entityId`, `idempotencyKey`, `requestPayloadHash` (não o payload completo com dado sensível, só hash + campos não sensíveis), `responseStatus`, `omieCode`, `omieDescription`, `attemptNumber`, `createdAt`. Essencial para a estratégia "consultar antes de repetir" (seção 9 do mapping).

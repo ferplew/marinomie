@@ -87,7 +87,7 @@ de conexão.
 - Os serviços de pedido/orçamento (`produtos/pedido`) ainda não têm service —
   entram na Fase 5, junto com a idempotência de escrita.
 
-## 5. Limitações da Fase 5 (catálogo, estoque e clientes)
+## 5. Limitações do catálogo, estoque e clientes
 
 - **Sincronização é manual e limitada a 5 páginas** por execução, rodando no
   próprio request. Enquanto as filas da Fase 6 não existirem, um catálogo maior
@@ -101,20 +101,42 @@ de conexão.
 - **A regra `CUSTOM` de disponibilidade não tem implementação.** Escolhê-la faz
   toda posição ser reportada como indeterminada, em vez de cair silenciosamente
   numa fórmula arbitrária.
-- **A resolução de preço por tabela não está ligada a nenhuma tela.** O módulo
-  está implementado e testado (precedência, teto de desconto, totais), mas quem
-  o consome é o carrinho de orçamento — que é a parte pendente da fase. A tela
-  de produto mostra o preço do cadastro e diz explicitamente que o preço de
-  venda vem da tabela aplicável.
+- **A tela de produto mostra o preço do cadastro**, não o preço resolvido pela
+  tabela — e diz isso explicitamente. O preço real é calculado no servidor ao
+  montar o orçamento, onde o cliente é conhecido.
 - **Tabelas de preço ainda não são sincronizadas** para o cache local: falta o
   `ListarTabelasPreco`, não implementado por não ter o nome do array confirmado.
 - **Edição de cliente ainda não existe** — só criação e consulta.
 - A busca usa `contains` case-insensitive. Suficiente para o volume de uma
   distribuidora; um catálogo muito grande pediria índice GIN com trigram.
 
+## 6. Limitações de orçamentos e pedidos
+
+- **`ListarPedidos` não é implementado**: o nome do array na resposta não pôde
+  ser confirmado na documentação. A listagem local não depende dele, mas a
+  reconciliação de pedidos alterados diretamente no Omie vai precisar — confirmar
+  antes da Fase 6.
+- **Aprovação de desconto não tem tela.** O `ApprovalRequest` é criado e
+  **bloqueia o envio**, mas ainda não existe interface para o gerente aprovar ou
+  recusar. Hoje isso exige intervenção no banco.
+- **O teto de aprovação é fixo em 30%**, não configurável por organização ainda.
+- **Frete, transportadora e parcelas** não são coletados: o pedido vai com
+  `codigo_parcela` padrão. `lista_parcelas` (exigida quando `codigo_parcela` é
+  `"999"`) não é montada.
+- **A revalidação de estoque antes do envio usa o cache local**, não uma leitura
+  direta à Omie. A leitura direta existe no botão "atualizar estoque" da tela do
+  produto, mas ainda não é disparada automaticamente no envio — é a melhoria mais
+  relevante pendente para reduzir overselling.
+- **Sem posição de estoque em cache, a venda não é bloqueada.** É decisão
+  deliberada: bloquear um item recém-cadastrado seria pior que deixar a Omie —
+  que é a autoridade real — recusar.
+- **Numeração local usa `MAX + 1`**, sem contador transacional. A constraint
+  única transforma colisão sob concorrência em erro visível, nunca em dois
+  documentos com o mesmo número, mas o contador adequado entra com as filas.
+- **Cancelamento e edição de orçamento** ainda não existem.
+
 **Ainda NÃO existe** (não confundir com pronto):
-- Orçamentos e pedidos — o coração do produto. É o que falta para fechar a
-  Fase 5.
+- Filas, workers, webhooks e reconciliação automática — Fase 6.
 - Nenhuma fila, worker, webhook ou reconciliação. Fase 6.
 - Incremento automático de tentativas falhas de login, recuperação de senha, MFA
   e tela de revogação de sessões (campos existem no schema e o bloqueio é
